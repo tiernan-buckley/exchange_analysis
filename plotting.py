@@ -1,5 +1,5 @@
-#import matplotlib
-#matplotlib.use('Agg')
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -21,8 +21,8 @@ outputs_dir = os.path.join(os.path.dirname(__file__), "outputs/")
 if not os.path.exists(outputs_dir):
     os.makedirs(outputs_dir)
 
-range_start = pd.Timestamp("2024-01-01 00:00", tz="UTC")
-range_end = pd.Timestamp("2024-12-31 23:59", tz="UTC")
+range_start = pd.Timestamp("2025-01-01 00:00", tz="UTC")
+range_end = pd.Timestamp("2025-12-31 23:59", tz="UTC")
 time_range = pd.date_range(start=range_start, end=range_end, freq="1h")
 #%%
 gen_types_df = pd.read_csv(
@@ -126,9 +126,12 @@ for country in bidding_zones:
     total_exports_overall.at[country, "Total Export"] = export_per_bidding_zone_methods[country].sum().sum()
 
 total_exports_overall = total_exports_overall.sort_values(by="Total Export", ascending=False)
+#%% 2025
+main_importers = ["DE_LU", "IT_NORD", "GB", "CH", "SE_4", "HU"]
+main_exporters = ["FR", "SE_2", "DE_LU", "NO_2", "CH", "NL"]
 #%% 2024
-main_importers = ["DE_LU", "GB", "IT_NORD", "NO_1", "SE_4", "HU"]
-main_exporters = ["FR", "SE_2", "NO_2", "CH", "DE_LU", "ES"]
+#main_importers = ["DE_LU", "GB", "IT_NORD", "NO_1", "SE_4", "HU"]
+#main_exporters = ["FR", "SE_2", "NO_2", "CH", "DE_LU", "ES"]
 #%% 2022
 #main_importers = ["DE_LU", "FR", "IT_NORD", "NO_1", "SE_4", "GB"]
 #main_exporters = ["FR", "SE_2", "NO_2", "CH", "DE_LU", "GB"]
@@ -146,28 +149,36 @@ for country in main_exporters:
     if country not in top_exporters:
         top_exporters.append(country)
 
+#2025
+top_exporters.remove("RS")
+
 #2024
-top_exporters.remove("CZ")
+#top_exporters.remove("CZ")
 #%%
 top_importers = []
 
 for country in main_exporters:
-    #2022
-    #for x in export_per_bidding_zone_methods[country].sum().sort_values(ascending=False).index[:5]:
-    for x in export_per_bidding_zone_methods[country].sum().sort_values(ascending=False).index[:4]:
+    #2025 or 2022
+    for x in export_per_bidding_zone_methods[country].sum().sort_values(ascending=False).index[:5]:
+    # 2024
+    #for x in export_per_bidding_zone_methods[country].sum().sort_values(ascending=False).index[:4]:
         if x not in top_importers:
             top_importers.append(x)
             
 for country in main_importers:
     if country not in top_importers:
         top_importers.append(country)
-  
+
+# 2025
+top_importers.remove("HU")
+top_importers.remove("IT_CSUD")
+
 #2024
-top_importers.remove("PL")
-top_importers.remove("NO_3")
-top_importers.remove("CZ")
-top_importers.append("ES")
-top_importers.append("CH")
+# top_importers.remove("PL")
+# top_importers.remove("NO_3")
+# top_importers.remove("CZ")
+# top_importers.append("ES")
+# top_importers.append("CH")
 #%%
 main_importers_per_method = {}
 
@@ -246,7 +257,7 @@ x = np.arange(len(main_importers))
 width = 0.2  # the width of the bars
 multiplier = 0
 
-fig, ax = plt.subplots(figsize = (18, 15), tight_layout=True)
+fig, ax = plt.subplots(figsize = (18, 10), tight_layout=True)
 bottom = np.zeros(len(main_importers))
 
 offset = width/2
@@ -327,7 +338,7 @@ x = np.arange(len(main_importers))
 width = 0.2  # the width of the bars
 multiplier = 0
 
-fig, ax = plt.subplots(figsize = (18, 15), tight_layout=True)
+fig, ax = plt.subplots(figsize = (18, 10), tight_layout=True)
 bottom = np.zeros(len(main_importers))
 
 labels = bidding_zones.copy()
@@ -408,7 +419,7 @@ x = np.arange(len(main_importers))
 width = 0.2  # the width of the bars
 multiplier = 0
 
-fig, ax = plt.subplots(figsize = (18, 15), tight_layout=True)
+fig, ax = plt.subplots(figsize = (18, 10), tight_layout=True)
 bottom = np.zeros(len(main_importers))
 
 offset = width/2
@@ -479,7 +490,7 @@ x = np.arange(len(main_importers))
 width = 0.2  # the width of the bars
 multiplier = 0
 
-fig, ax = plt.subplots(figsize = (18, 15), tight_layout=True)
+fig, ax = plt.subplots(figsize = (18, 10), tight_layout=True)
 bottom = np.zeros(len(main_importers))
 
 labels = bidding_zones.copy()
@@ -551,7 +562,7 @@ x = np.arange(len(main_exporters))  # the label locations
 width = 0.2  # the width of the bars
 multiplier = 0
 
-fig, ax = plt.subplots(figsize = (18, 15))
+fig, ax = plt.subplots(figsize = (18, 10))
 
 for m_type in method_subset_types:
     offset = width * multiplier
@@ -610,7 +621,7 @@ x = np.arange(len(main_exporters))
 width = 0.2  # the width of the bars
 multiplier = 0
 
-fig, ax = plt.subplots(figsize = (18, 15), tight_layout=True)
+fig, ax = plt.subplots(figsize = (18, 10), tight_layout=True)
 bottom = np.zeros(len(main_exporters))
 
 offset = width/2
@@ -693,7 +704,7 @@ x = np.arange(len(main_exporters))
 width = 0.2  # the width of the bars
 multiplier = 0
 
-fig, ax = plt.subplots(figsize = (18, 15), tight_layout=True)
+fig, ax = plt.subplots(figsize = (18, 10), tight_layout=True)
 bottom = np.zeros(len(main_exporters))
 
 labels = bidding_zones.copy()
@@ -780,7 +791,7 @@ x = np.arange(len(main_exporters))
 width = 0.2  # the width of the bars
 multiplier = 0
 
-fig, ax = plt.subplots(figsize = (18, 15), tight_layout=True)
+fig, ax = plt.subplots(figsize = (18, 10), tight_layout=True)
 bottom = np.zeros(len(main_exporters))
 
 offset = width/2
@@ -850,7 +861,7 @@ x = np.arange(len(main_exporters))
 width = 0.2  # the width of the bars
 multiplier = 0
 
-fig, ax = plt.subplots(figsize = (18, 15), tight_layout=True)
+fig, ax = plt.subplots(figsize = (18, 10), tight_layout=True)
 bottom = np.zeros(len(main_exporters))
 
 labels = bidding_zones.copy()

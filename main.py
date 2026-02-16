@@ -33,7 +33,7 @@ def main():
     }
     
     # 2. Define Period (UTC)
-    period = ("2024-01-01 00:00", "2024-12-31 23:59") 
+    period = ("2025-01-01 00:00", "2025-12-31 23:59") 
 
     # 3. Optional: Download only Subsets of Data (Uncomment to use)
     # -------------------------------------------------------
@@ -58,8 +58,9 @@ def main():
     )
     
     # 5. Setup Logging
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    start_logging(config.base_dir / "logs" / f"log_{timestamp}.log")
+    timestamp = datetime.now().strftime("%Y-%m-%d")
+    timestamp_detailed = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    start_logging(config.base_dir / "logs" / f"log_{timestamp}" / f"log_{timestamp_detailed}.log")
 
     # ==========================================
     # PIPELINE EXECUTION

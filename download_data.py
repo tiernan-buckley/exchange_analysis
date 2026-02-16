@@ -109,10 +109,15 @@ def process_generation_demand(config: PipelineConfig) -> Dict[str, pd.DataFrame]
 # ==========================================
 
 def download_flows(client: EntsoePandasClient, config: PipelineConfig, flow_type: str = "commercial", dayahead: bool = False):
-    """Downloads raw flows. Iterates strictly over TARGET ZONES."""
+    """
+    Downloads raw commercial or physical flows. 
+    Iterates strictly over TARGET ZONES as defined in config.
+    """
+    # Check if this data type is enabled in config
     if flow_type == "commercial" and not config.data_types.get(f"flows_commercial{'_dayahead' if dayahead else '_total'}"): return
     if flow_type == "physical" and not config.data_types.get("flows_physical"): return
 
+    # Determine output folder
     if flow_type == "physical":
         folder = "physical_flow_data_bidding_zones"
     else:
@@ -124,9 +129,13 @@ def download_flows(client: EntsoePandasClient, config: PipelineConfig, flow_type
     for bz in config.target_zones:
         print(f"[Download] {flow_type} flows for {bz} (Dayahead={dayahead})...")
         flow_df = None
+        
+        # Iterate over neighbors
         for n in [z for z in config.neighbours_map[bz] if z in config.zones]:
             out_label = f"{flow_type} {bz}->{n}"
             in_label = f"{flow_type} {n}->{bz}"
+            
+            # Fetch Outgoing and Incoming flows
             if flow_type == "commercial":
                 f_out = safe_query(client.query_scheduled_exchanges, context=out_label, country_code_from=bz, country_code_to=n, start=config.start, end=config.end, dayahead=dayahead)
                 f_in = safe_query(client.query_scheduled_exchanges, context=in_label, country_code_from=n, country_code_to=bz, start=config.start, end=config.end, dayahead=dayahead)
@@ -134,10 +143,19 @@ def download_flows(client: EntsoePandasClient, config: PipelineConfig, flow_type
                 f_out = safe_query(client.query_crossborder_flows, context=out_label, country_code_from=bz, country_code_to=n, start=config.start, end=config.end)
                 f_in = safe_query(client.query_crossborder_flows, context=in_label, country_code_from=n, country_code_to=bz, start=config.start, end=config.end)
 
-            if f_out is not None: flow_df = pd.concat([flow_df, f_out.to_frame(name=f"{bz}_{n}")], axis=1)
-            if f_in is not None: flow_df = pd.concat([flow_df, f_in.to_frame(name=f"{n}_{bz}")], axis=1)
+            # Concatenate flows, ensuring no duplicate indices interfere
+            if f_out is not None: 
+                f_out = f_out.loc[~f_out.index.duplicated(keep='first')]
+                flow_df = pd.concat([flow_df, f_out.to_frame(name=f"{bz}_{n}")], axis=1)
+            
+            if f_in is not None: 
+                f_in = f_in.loc[~f_in.index.duplicated(keep='first')]
+                flow_df = pd.concat([flow_df, f_in.to_frame(name=f"{n}_{bz}")], axis=1)
 
-        if flow_df is not None: flow_df.to_csv(raw_dir / f"{bz}_raw_flows.csv")
+        # Save raw file if data was found
+        if flow_df is not None: 
+            flow_df = flow_df.loc[~flow_df.index.duplicated(keep='first')]
+            flow_df.to_csv(raw_dir / f"{bz}_raw_flows.csv")
 
 def process_flows(config: PipelineConfig, flow_type: str = "commercial", dayahead: bool = False) -> Dict[str, pd.DataFrame]:
     """Processes flows for ALL ZONES."""
