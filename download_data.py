@@ -194,7 +194,7 @@ def process_flows(config: PipelineConfig, flow_type: str = "commercial", dayahea
         # Zero Correction (1-week patch)
         final_df = correct_zero_values(final_df, gaps_dir, bz, config)
         
-        filename = f"{bz}_commercial_flows_{'dayahead' if dayahead else 'total'}_bidding_zones.csv" if flow_type == "commercial" else f"{bz}_physical_flow_data_bidding_zones.csv"
+        filename = f"{bz}_comm_flows_{'dayahead' if dayahead else 'total'}_bidding_zones.csv" if flow_type == "commercial" else f"{bz}_physical_flow_data_bidding_zones.csv"
         final_df.to_csv(out_dir / filename)
         flow_dict[bz] = final_df
 
