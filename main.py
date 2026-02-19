@@ -11,6 +11,7 @@ from download_data import (
     download_flows,
     process_flows,
     balance_flows_symmetry,
+    fetch_simple_metrics
 )
 from data_analysis import (
     perform_decomposition_analysis, 
@@ -75,6 +76,7 @@ def main():
         download_flows(client, config, "commercial", dayahead=False)
         download_flows(client, config, "commercial", dayahead=True)
         download_flows(client, config, "physical")
+        fetch_simple_metrics(client, config)
 
     # --- PHASE 2: PROCESS ---
     gen_data, final_comm, final_phys = None, None, None
@@ -88,9 +90,13 @@ def main():
         raw_comm = process_flows(config, "commercial", dayahead=False)
         final_comm = balance_flows_symmetry(raw_comm, config, "commercial", dayahead=False)
         
-        # C. Day Ahead Flows -> Balance & Save (discard memory)
+        # B. Day Ahead Flows -> Balance & Save (discard memory)
         raw_da = process_flows(config, "commercial", dayahead=True)
         balance_flows_symmetry(raw_da, config, "commercial", dayahead=True)
+        
+        # C. Commercial Flows (Total) -> Balance & Keep
+        raw_comm = process_flows(config, "commercial", dayahead=False)
+        final_comm = balance_flows_symmetry(raw_comm, config, "commercial", dayahead=False)
         
         # D. Physical Flows -> Balance & Keep
         raw_phys = process_flows(config, "physical")
