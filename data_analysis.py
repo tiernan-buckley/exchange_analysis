@@ -63,6 +63,7 @@ def perform_decomposition_analysis(config: PipelineConfig, gen_dfs=None, comm_df
     
     # Setup Output Directories
     agg_map = config.gen_types_df.groupby(['converted'])['entsoe'].apply(list).to_dict()
+            
     base_out = config.output_dir / "comm_flow_total_bidding_zones" / str(config.year) / "results"
     
     dirs = {t: base_out / t for t in ["per_type_per_bidding_zone", "per_type", "per_agg_type", "per_bidding_zone"]}
@@ -89,7 +90,7 @@ def perform_decomposition_analysis(config: PipelineConfig, gen_dfs=None, comm_df
         # We look for columns like "FR_DE_LU" (Import to DE from FR) inside DE's dataframe
         for neighbor in config.zones:
             col_flow = f"{neighbor}_{bz}"
-            col_netted = f"{bz}_{neighbor}_netted_import" # Note: Netted naming convention varies in your script, check this!
+            col_netted = f"{bz}_{neighbor}_netted_import" 
             
             # Save Raw Total Flow
             if col_flow in comm_dfs[bz].columns:
@@ -117,8 +118,11 @@ def perform_decomposition_analysis(config: PipelineConfig, gen_dfs=None, comm_df
         cols = [c for c in df.columns if c in config.gen_types_list]
         total = df["Total Generation"].replace(0, 1) # Avoid div/0
         fracs = df[cols].div(total, axis=0)
+        
+        # Rename the fraction dynamically to "Storage" instead of specifically Hydro
         if "Storage Discharge" in df.columns:
-            fracs["Hydro Pumped Storage"] = df["Storage Discharge"] / total
+            fracs["Storage"] = df["Storage Discharge"] / total
+            
         gen_fractions[bz] = fracs
 
     # C. Perform Decomposition
@@ -150,8 +154,6 @@ def perform_decomposition_analysis(config: PipelineConfig, gen_dfs=None, comm_df
                         n_df.columns = [f"{neighbor}_{c}" for c in n_df.columns]
                         netted_imp_list.append(n_df)
                 else:
-                    # Log missing neighbor mix (common issue)
-                    # Only log if flow is non-zero to avoid spam
                     if comm_dfs[bz][col_flow].sum() > 0:
                         print(f"      [Warning] Flow exists from {neighbor}->{bz}, but no generation data for {neighbor}. Skipping.")
 
@@ -163,11 +165,12 @@ def perform_decomposition_analysis(config: PipelineConfig, gen_dfs=None, comm_df
             total_full.to_csv(dirs["per_type_per_bidding_zone"] / f"{bz}_import_comm_flow_total_per_type_per_bidding_zone.csv")
             netted_full.to_csv(dirs["netted_per_type_per_bidding_zone"] / f"{bz}_import_comm_flow_total_netted_per_type_per_bidding_zone.csv")
             
-            # D. Aggregate by Fuel Type (e.g., all Wind entering DE)
+            # D. Aggregate by Fuel Type
             per_type = pd.DataFrame(index=config.time_index)
             per_type_net = pd.DataFrame(index=config.time_index)
             
-            for tech in config.gen_types_list + ["Hydro Pumped Storage"]:
+            # Look for the new 'Storage' column instead of just Hydro
+            for tech in config.gen_types_list:
                 cols = [c for c in total_full.columns if c.endswith(f"_{tech}") or c.endswith(f"_{tech} ")]
                 cols_exact = [c for c in cols if c.split('_')[-1].strip() == tech]
                 if cols_exact:
@@ -190,7 +193,6 @@ def perform_decomposition_analysis(config: PipelineConfig, gen_dfs=None, comm_df
             per_agg_net.to_csv(dirs["netted_per_agg_type"] / f"{bz}_import_comm_flow_total_netted_per_agg_type.csv")
             
     print("[Decomposition] Analysis Complete.")
-
 
 # ==========================================
 # PART 2 SHARED: TRACING SAVER
@@ -219,8 +221,8 @@ def _decompose_and_save(config, traced_dfs, base_dir, label, gen_dfs):
         total = df["Total Generation"].replace(0, 1)
         
         fracs = df[cols].div(total, axis=0) 
-        if "Storage Discharge" in df.columns: 
-            fracs["Hydro Pumped Storage"] = df["Storage Discharge"] / total
+        if "Storage Discharge" in df.columns:
+            fracs["Storage"] = df["Storage Discharge"] / total
         
         gen_fractions[bz] = fracs
 
@@ -260,7 +262,7 @@ def _decompose_and_save(config, traced_dfs, base_dir, label, gen_dfs):
             
             # Aggregate per Type
             per_type = pd.DataFrame(index=config.time_index)
-            for tech in config.gen_types_list + ["Hydro Pumped Storage"]:
+            for tech in config.gen_types_list:
                 cols = [c for c in full_type.columns if c.endswith(f"_{tech}") or c.endswith(f"_{tech} ")]
                 cols_exact = [c for c in cols if c.split('_')[-1].strip() == tech]
                 if cols_exact: per_type[tech] = full_type[cols_exact].sum(axis=1)
@@ -457,7 +459,7 @@ def perform_pooling_analysis(config: PipelineConfig, gen_dfs=None, comm_dfs=None
         
         fracs = df[cols].div(total, axis=0) 
         if "Storage Discharge" in df.columns: 
-            fracs["Hydro Pumped Storage"] = df["Storage Discharge"] / total
+            fracs["Storage"] = df["Storage Discharge"] / total
         
         gen_fractions[bz] = fracs.loc[:, ~fracs.columns.duplicated()].fillna(0.0)
         
@@ -502,7 +504,7 @@ def perform_pooling_analysis(config: PipelineConfig, gen_dfs=None, comm_dfs=None
                 
                 # C. Aggregate by Fuel Type
                 per_type = pd.DataFrame(index=config.time_index)
-                for tech in config.gen_types_list + ["Hydro Pumped Storage"]:
+                for tech in config.gen_types_list:
                     cols = [c for c in full.columns if c.endswith(f"_{tech}") or c.endswith(f"_{tech} ")]
                     cols_exact = [c for c in cols if c.split('_')[-1].strip() == tech]
                     if cols_exact: per_type[tech] = full[cols_exact].sum(axis=1)
@@ -608,7 +610,7 @@ def perform_post_processing_aggregation(config: PipelineConfig):
             cols = [c for c in df.columns if c in config.gen_types_list]
             total = df["Total Generation"].replace(0, 1)
             fracs = df[cols].div(total, axis=0)
-            if "Storage Discharge" in df.columns: fracs["Hydro Pumped Storage"] = df["Storage Discharge"] / total
+            if "Storage Discharge" in df.columns: fracs["Storage"] = df["Storage Discharge"] / total
             gen_fractions[bz] = fracs.loc[:, ~fracs.columns.duplicated()].fillna(0.0)
 
     # Load All Results
@@ -626,7 +628,7 @@ def perform_post_processing_aggregation(config: PipelineConfig):
             ac.loc[ac.index.intersection(missing_times)] = imports["Pooled Net Phys."][bz].loc[ac.index.intersection(missing_times)]
         imports["AC Flow Tracing"][bz] = ac
 
-    target_cols = list(set(config.gen_types_list + ["Hydro Pumped Storage"]))
+    target_cols = list(set(config.gen_types_list))
     agg_map = config.gen_types_df.groupby(['converted'])['entsoe'].apply(list).to_dict()
 
     # Aggregate and Save

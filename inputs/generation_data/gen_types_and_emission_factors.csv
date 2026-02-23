@@ -8,7 +8,7 @@ Hydro Run-of-river and poundage,Hydro,False,0.0,0.0,0.0,0.0,0.0
 Geothermal,Other renewable,False,0.0,0.0,0.0,0.0,0.0
 Marine,Other renewable,False,0.0,0.0,0.0,0.0,0.0
 Other renewable,Other renewable,False,0.0,0.0,0.0,0.0,0.0
-Hydro Pumped Storage,Storage,True,0.251,0.29,0.392,0.274,0.274
+Storage,Storage,True,0.251,0.29,0.392,0.274,0.274
 Nuclear,Nuclear,False,0.0,0.0,0.0,0.0,0.0
 Fossil Brown coal/Lignite,Lignite,False,1.1,1.082,1.074,1.074,1.074
 Fossil Hard coal,Hard coal,False,0.854,0.845,0.844,0.844,0.844
