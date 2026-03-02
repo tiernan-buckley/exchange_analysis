@@ -6,7 +6,7 @@ import os
 import pandas as pd
 import sys
 
-from entsoe import mappings
+from mappings_alt import NEIGHBOURS
 
 from matplotlib import colors
 #%%
@@ -31,8 +31,8 @@ gen_types_df = pd.read_csv(
 
 gen_types_list = gen_types_df["entsoe"].tolist()
 #%%
-bidding_zones = list(mappings.NEIGHBOURS.copy().keys())
-bidding_zones_dict = mappings.NEIGHBOURS.copy()
+bidding_zones = list(NEIGHBOURS.copy().keys())
+bidding_zones_dict = NEIGHBOURS.copy()
 bidding_zones.remove("DE_AT_LU")
 bidding_zones.remove("IE_SEM")
 bidding_zones.remove("MT")
@@ -69,7 +69,7 @@ for bz, df in gen_dfs.items():
     total = df["Total Generation"].replace(0, 1) # Avoid div/0
     fracs = df[cols].div(total, axis=0)
     if "Storage Discharge" in df.columns:
-        fracs["Hydro Pumped Storage"] = df["Storage Discharge"] / total
+        fracs["Storage"] = df["Storage Discharge"] / total
     gen_dfs_fractions[bz] = fracs
 #%%
 annual_totals_import_per_bidding_zone_dir = os.path.join(outputs_dir, "annual_totals_per_method/{}/import/per_bidding_zone".format(range_start.strftime('%Y')))
@@ -127,14 +127,14 @@ for country in bidding_zones:
 
 total_exports_overall = total_exports_overall.sort_values(by="Total Export", ascending=False)
 #%% 2025
-main_importers = ["DE_LU", "IT_NORD", "GB", "CH", "SE_4", "HU"]
-main_exporters = ["FR", "SE_2", "DE_LU", "NO_2", "CH", "NL"]
+#main_importers = ["DE_LU", "IT_NORD", "GB", "CH", "SE_4", "HU"]
+#main_exporters = ["FR", "SE_2", "DE_LU", "NO_2", "CH", "NL"]
 #%% 2024
 #main_importers = ["DE_LU", "GB", "IT_NORD", "NO_1", "SE_4", "HU"]
 #main_exporters = ["FR", "SE_2", "NO_2", "CH", "DE_LU", "ES"]
 #%% 2022
-#main_importers = ["DE_LU", "FR", "IT_NORD", "NO_1", "SE_4", "GB"]
-#main_exporters = ["FR", "SE_2", "NO_2", "CH", "DE_LU", "GB"]
+main_importers = ["DE_LU", "FR", "IT_NORD", "NO_1", "SE_4", "GB"]
+main_exporters = ["FR", "SE_2", "NO_2", "CH", "DE_LU", "GB"]
 #%%
 top_exporters = []
 
@@ -150,7 +150,10 @@ for country in main_exporters:
         top_exporters.append(country)
 
 #2025
-top_exporters.remove("RS")
+#top_exporters.remove("RS")
+top_exporters.remove("SE_1")
+top_exporters.remove("SI")
+top_exporters.append("SE_4")
 
 #2024
 #top_exporters.remove("CZ")
@@ -170,7 +173,9 @@ for country in main_importers:
         top_importers.append(country)
 
 # 2025
-top_importers.remove("HU")
+#top_importers.remove("HU")
+#top_importers.remove("IT_CSUD")
+top_importers.remove("CZ")
 top_importers.remove("IT_CSUD")
 
 #2024
