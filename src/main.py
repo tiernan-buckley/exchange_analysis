@@ -40,8 +40,8 @@ def main():
     
     # 1. Execution Flags (True = Run this step)
     my_run_flags = {
-        "download": True,
-        "process": True,
+        "download": False,
+        "process": False,
         "analysis": True,
         "post_processing": True,
     }
@@ -90,7 +90,7 @@ def main():
     # 6. Setup Logging
     timestamp = datetime.now().strftime("%Y-%m-%d")
     timestamp_detailed = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    start_logging(config.base_dir / "logs" / f"log_{timestamp}" / f"log_{timestamp_detailed}.log")
+    start_logging(config.project_root / "logs" / f"log_{timestamp}" / f"log_{timestamp_detailed}.log")
 
     # ==========================================
     # PIPELINE EXECUTION

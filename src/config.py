@@ -6,8 +6,8 @@ License: Creative Commons Attribution 4.0 International (CC BY 4.0)
 Source: https://github.com/INATECH-CIG/exchange_analysis
 
 Description:
-Centralizes all project configurations, including execution flags, 
-temporal boundaries, API credentials, and spatial grid topologies.
+Central Configuration Class for the Exchange Analysis Pipeline.
+Manages temporal boundaries, execution flags, I/O routing, and spatial (zonal) constraints.
 """
 
 import yaml
@@ -17,10 +17,6 @@ from typing import Dict, Optional, Tuple, List, Any
 from mappings_alt import NEIGHBOURS
 
 class PipelineConfig:
-    """
-    Central Configuration Class for the Exchange Analysis Pipeline.
-    Manages temporal boundaries, execution flags, I/O routing, and spatial (zonal) constraints.
-    """
     def __init__(
         self, 
         date_range: Tuple[str, str],
@@ -34,31 +30,33 @@ class PipelineConfig:
         # ==========================================
         # DIRECTORY MAPPING
         # ==========================================
-        self.base_dir = Path(__file__).parent
-        self.output_dir = self.base_dir / "outputs"
-        self.input_dir = self.base_dir / "inputs"
+        # Path(__file__).parent is the 'src' directory.
+        # .parent.parent goes up one level to the main project root.
+        self.project_root = Path(__file__).parent.parent
+        self.output_dir = self.project_root / "outputs"
+        self.input_dir = self.project_root / "inputs"
         
         # ==========================================
         # TEMPORAL BOUNDARIES
         # ==========================================
         self.start = pd.Timestamp(date_range[0], tz="UTC")
         raw_end = pd.Timestamp(date_range[1], tz="UTC")
-
-        # Account for if start of hour is used as end of time range
-        if raw_end.minute == 0:
+        
+        # --- TIME BOUNDARY CORRECTION ---
+        # Shifts exact midnight end-dates back by 1 minute to prevent dangling 
+        # indices that fall outside the API's inclusive hourly blocks.
+        if raw_end.hour == 0 and raw_end.minute == 0:
             self.end = raw_end - pd.Timedelta(minutes=1)
             print(f"[Config] Adjusted end date from {raw_end} to {self.end} for inclusive indexing.")
         else:
             self.end = raw_end
         
-        # Establishes the standard hourly cadence required for Flow Tracing matrices
         self.time_index = pd.date_range(start=self.start, end=self.end, freq="1h")
         self.year = self.start.year 
         
         # ==========================================
         # PIPELINE ORCHESTRATION FLAGS
         # ==========================================
-        # High-level controls to toggle main script phases (Download, Process, Analyze, Aggregate)
         self.run_phases = {
             "download": True, 
             "process": True, 
@@ -67,7 +65,6 @@ class PipelineConfig:
         }
         if run_flags: self.run_phases.update(run_flags)
 
-        # Granular controls for specific analytical methodologies
         self.analysis_flags = {
             "zone_to_gen_type_analysis": True,
             "ac_flow_tracing_analysis": True,
@@ -79,8 +76,6 @@ class PipelineConfig:
         # ==========================================
         # DATA I/O ROUTING
         # ==========================================
-        # Determines if outputs are written to local flat CSVs, pushed to a relational 
-        # database (TimescaleDB), or both. Also sets the primary source for loading data.
         self.save_csv = True
         self.save_db = True
         self.load_source = 'csv' # Options: 'csv' or 'db'
@@ -93,7 +88,6 @@ class PipelineConfig:
         # ==========================================
         # API DOWNLOAD FILTERS
         # ==========================================
-        # Toggles which data domains should be queried from the ENTSO-E Transparency Platform
         self.data_types = {
             "generation": True,
             "flows_commercial_total": True,
@@ -106,15 +100,10 @@ class PipelineConfig:
         # ==========================================
         # SPATIAL CONFIGURATION (ZONES & TOPOLOGY)
         # ==========================================
-        # Establishes the master grid topology (all nodes and edges)
         self.all_zones = list(NEIGHBOURS.copy().keys())
         self.neighbours_map = NEIGHBOURS.copy()
-        
-        # Purges structural anomalies (e.g., non-physical market zones) from the node list
         self._filter_zones()
 
-        # Defines a specific subset of zones to query from the API.
-        # If None, the script will attempt to query the entire European network.
         if target_zones:
             self.target_zones = [z for z in target_zones if z in self.all_zones]
             print(f"Configured for subset of zones: {self.target_zones}")
@@ -124,20 +113,17 @@ class PipelineConfig:
         # ==========================================
         # CREDENTIALS & METADATA
         # ==========================================
-        with open(self.base_dir / key_file, "r") as f:
+        # Looks for keys.yaml in the main project root
+        with open(self.project_root / key_file, "r") as f:
             self.api_key = yaml.safe_load(f)["entsoe-key"]
             
-        # Loads static metadata mapping ENTSO-E technology strings to standardized analysis categories
         self.gen_types_df = pd.read_csv(
             self.input_dir / "generation_data/gen_types_and_emission_factors.csv"
         )
         self.gen_types_list = self.gen_types_df["entsoe"].tolist()
 
     def _filter_zones(self):
-        """
-        Removes predefined structural anomalies, retired bidding zones, or non-physical 
-        virtual trading hubs (e.g., internal Italian market nodes) from the active topology.
-        """
+        """Removes predefined structural anomalies from the active topology."""
         to_remove = ["DE_AT_LU", "IE_SEM", "IE", "NIE", "MT", 
                      "IT", "IT_BRNN", "IT_ROSN", "IT_FOGN"]
         for z in to_remove:
@@ -146,10 +132,6 @@ class PipelineConfig:
 
     @property
     def zones(self):
-        """
-        Alias for all_zones. Exists to explicitly denote the full network scope 
-        used during Flow Tracing matrix generation, regardless of download subsets.
-        """
         return self.all_zones
 
     # ==========================================
