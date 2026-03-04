@@ -31,12 +31,27 @@ def main():
         "download": True,
         "process": True,
         "analysis": True,
+        "post_processing": True,
+    }
+
+    analysis_subset = {
+        "zone_to_gen_type_analysis": True,
+        "ac_flow_tracing_analysis": True,
+        "dc_flow_tracing_analysis": True,
+        "pooling_analysis": True,
     }
     
     # 2. Define Period (UTC)
-    period = ("2025-01-01 00:00", "2025-12-31 23:59") 
+    period = ("2026-01-10 00:00", "2026-01-11 00:00") 
 
-    # 3. Optional: Download only Subsets of Data (Uncomment to use)
+    # 3. Define I/O Settings (Storage & Loading)
+    my_io_settings = {
+        "save_csv": False,       # Save outputs locally as CSVs
+        "save_db": True,        # Push outputs to the TimescaleDB server
+        "load_source": "db"     # 'csv' or 'db' - where to read data from in Process/Analysis steps
+    }
+
+    # 4. Optional: Download only Subsets of Data (Uncomment to use)
     # -------------------------------------------------------
     # selected_bzs = ["DE_LU", "FR", "GB"] 
     #
@@ -49,16 +64,18 @@ def main():
     # }
     # -------------------------------------------------------
 
-    # 4. Initialize Config
+    # 5. Initialize Config
     config = PipelineConfig(
         date_range=period,
         run_flags=my_run_flags,
+        io_settings=my_io_settings,
+        analysis_flags=analysis_subset,
         # Uncomment below to apply subsets:
         # target_zones=selected_bzs,
         # data_types=selected_data_types
     )
     
-    # 5. Setup Logging
+    # 6. Setup Logging
     timestamp = datetime.now().strftime("%Y-%m-%d")
     timestamp_detailed = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     start_logging(config.base_dir / "logs" / f"log_{timestamp}" / f"log_{timestamp_detailed}.log")
@@ -90,13 +107,9 @@ def main():
         raw_comm = process_flows(config, "commercial", dayahead=False)
         final_comm = balance_flows_symmetry(raw_comm, config, "commercial", dayahead=False)
         
-        # B. Day Ahead Flows -> Balance & Save (discard memory)
+        # C. Day Ahead Flows -> Balance & Save (discard memory)
         raw_da = process_flows(config, "commercial", dayahead=True)
         balance_flows_symmetry(raw_da, config, "commercial", dayahead=True)
-        
-        # C. Commercial Flows (Total) -> Balance & Keep
-        raw_comm = process_flows(config, "commercial", dayahead=False)
-        final_comm = balance_flows_symmetry(raw_comm, config, "commercial", dayahead=False)
         
         # D. Physical Flows -> Balance & Keep
         raw_phys = process_flows(config, "physical")
@@ -105,17 +118,22 @@ def main():
     # --- PHASE 3: ANALYSIS ---
     if config.run_phases["analysis"]:
         print("\n=== STARTING ANALYSIS ===")
-        
+
         # 1. Neighbor Decomposition (Import Mix based on neighbors)
-        perform_decomposition_analysis(config, gen_dfs=gen_data, comm_dfs=final_comm)
+        if config.analysis_flags["zone_to_gen_type_analysis"]:
+            perform_decomposition_analysis(config, gen_dfs=gen_data, comm_dfs=final_comm)
         
         # 2. Flow Tracing (Matrix Inversion)
-        perform_aggregated_flow_tracing(config, gen_dfs=gen_data, phys_flow_dfs=final_phys)
-        perform_direct_flow_tracing(config, gen_dfs=gen_data, phys_flow_dfs=final_phys)
+        if config.analysis_flags["ac_flow_tracing_analysis"]:
+            perform_aggregated_flow_tracing(config, gen_dfs=gen_data, phys_flow_dfs=final_phys)
+        if config.analysis_flags["dc_flow_tracing_analysis"]:
+            perform_direct_flow_tracing(config, gen_dfs=gen_data, phys_flow_dfs=final_phys)
         
         # 3. Pooling (European Mix)
-        perform_pooling_analysis(config, gen_dfs=gen_data, comm_dfs=final_comm, phys_flow_dfs=final_phys)
-        
+        if config.analysis_flags["pooling_analysis"]:
+            perform_pooling_analysis(config, gen_dfs=gen_data, comm_dfs=final_comm, phys_flow_dfs=final_phys)
+    
+    if config.run_phases["post_processing"]:
         # 4. Aggregation (Annual Totals)
         perform_post_processing_aggregation(config)
 

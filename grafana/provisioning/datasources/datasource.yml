@@ -1,0 +1,16 @@
+apiVersion: 1
+datasources:
+  - name: TimescaleDB
+    type: postgres
+    access: proxy
+    url: timescaledb:5432
+    database: exchange_analysis
+    user: thesis_admin
+    secureJsonData:
+      password: secure_grid_password
+    jsonData:
+      sslmode: 'disable'
+      postgresVersion: 1500
+      timescaledb: true
+    isDefault: true
+    editable: true

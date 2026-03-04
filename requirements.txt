@@ -4,3 +4,5 @@ entsoe-py>=0.6.18
 matplotlib>=3.7.0
 pyyaml
 requests
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0

@@ -1,6 +1,10 @@
 # Exchange Analysis
 
-This project analyses data available through the ENTSO-E API using multiple methods (e.g. flow tracing, pooling), in order to determine the import sources and export sinks in the European electricity market on a per bidding zone and per type basis, for each bidding zone in the network. Import/export results for the following methods can be calculated:
+This project analyses data available through the ENTSO-E API using multiple methods (e.g. flow tracing, pooling), in order to determine the import sources and export sinks in the European electricity market on a per bidding zone and per type basis, for each bidding zone in the network.
+
+In addition to generating local CSV outputs, this project includes an **optional** fully containerized **TimescaleDB (PostgreSQL) and Grafana stack** for high-performance querying and interactive time-series visualization.
+
+Import/export results for the following methods can be calculated:
 
 1. **Commercial Flows Total (CFT):** Take incoming/outgoing line (for import/export) as the exchange value from/to a neighbouring bidding zone.
 2. **Netted Commercial Flows Total (Netted CFT):** Net over incoming and outgoing line as the exchange value from/to a neighbouring bidding zone.
@@ -14,6 +18,7 @@ This project analyses data available through the ENTSO-E API using multiple meth
 * **Python:** 3.10 or higher recommended.
 * **Anaconda** (Recommended) or standard Python installation.
 * **ENTSO-E API Key:** Required for downloading data. You can obtain a free API key by registering on the [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) and requesting "Restful API Access" in your account settings.
+* **Docker Desktop** *(Optional)*: Only required if you want to run the local TimescaleDB database and Grafana dashboard.
 
 ---
 
@@ -72,38 +77,53 @@ entsoe-key: "YOUR-UUID-API-KEY-HERE"
 
 ```
 
-> **Note:** You can obtain a free API key by registering on the [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) and requesting "Restful API Access" in your account settings.
-
 ---
 
 ## ▶️ Usage
 
-### 1. Configure the Run
+### Step 1: Configure the Run
 
 Open `main.py` to adjust the **Control Panel** section:
 
+* **Output Destinations:** Choose where to save your processed data (e.g., save to flat CSV files, push directly to the PostgreSQL/TimescaleDB database, or both).
 * **Run Flags:** Set steps to `True` or `False` (e.g., set `download: False` if you already have the data).
-* **Period:** Set your start and end dates (e.g., `"2024-01-01 00:00"`, `"2024-12-31 23:59"`), output directories are organised by years, so the best practice is to use a full year as start and end dates.
-* **Subsets:** Uncomment `selected_bzs`/`target_zones` if you only want to download data for specific bidding zones (e.g., `["DE_LU", "FR"]`), and `selected_data_types`/`data_types` to download specific types of data (generation and load, commercial flow total etc.).
+* **Period:** Set your start and end dates (e.g., `"2024-01-01 00:00"`, `"2024-12-31 23:59"`). Output directories are organized by years, so the best practice is to use a full year.
+* **Subsets:** Uncomment `selected_bzs`/`target_zones` if you only want to download data for specific bidding zones (e.g., `["DE_LU", "FR"]`), and `selected_data_types`/`data_types` to download specific types of data.
 
+### Step 2: (Optional) Start the Database & Dashboard Stack
 
-### 2. Run the Pipeline
+If you chose to save your outputs to the database in the Control Panel, you need to spin up the local server *before* running the Python script.
 
-Ensure your environment is activated (`conda activate energy-analysis`) and run:
+Ensure Docker is running on your machine, then execute:
+
+```bash
+docker compose up -d
+
+```
+
+*(This starts a TimescaleDB instance on port 5433 and a Grafana instance on port 3001. To shut them down later, run `docker compose down`)*.
+
+### Step 3: Run the Pipeline
+
+Ensure your environment is activated (`conda activate exchange-analysis`) and execute the main script:
 
 ```bash
 python main.py
 
 ```
 
-### 3. Check the Logs
+Real-time logs will appear in your terminal, and detailed logs are saved to `logs/log_{TIMESTAMP}.log`.
 
-Real-time logs will appear in your terminal. Detailed logs are saved to:
-`logs/log_{TIMESTAMP}.log`
+### Step 4: View the Results
+
+Depending on the outputs selected in the Control Panel:
+
+* **Flat Files:** Check the `outputs/` folder for the generated CSV time series.
+* **Interactive Dashboards:** Open your browser to **`http://localhost:3001`** (Login: `admin` / `admin`). Navigate to **Connections > Data Sources** to verify TimescaleDB is connected (click `Start & test`), and view all matrices mapped over time!
 
 ---
 
-## 📂 Outputs
+## 📂 Flat Files Directory
 
 Import results are saved on a per bidding zone, per type, and "per bidding zone per type" basis as CSV time series in the `outputs/` directory, organized by year. Exports are only saved as totals, as export time series would be essentially a duplicate of import time series results. The following folders can be generated:
 
@@ -113,6 +133,3 @@ Import results are saved on a per bidding zone, per type, and "per bidding zone 
 * **`import_flow_tracing.../`**: Import source values as a result of flow tracing analysis.
 * **`pooling/`**: Import source values as a result of flow tracing analysis.
 * **`annual_totals_per_method/`**: Final aggregated TWh import and export totals.
-
----
-

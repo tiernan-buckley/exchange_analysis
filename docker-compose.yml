@@ -1,0 +1,29 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb-ha:pg15-latest
+    container_name: exchange_analysis_db
+    environment:
+      - POSTGRES_USER=thesis_admin
+      - POSTGRES_PASSWORD=secure_grid_password
+      - POSTGRES_DB=exchange_analysis
+    ports:
+      - "5433:5432"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    restart: always
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: exchange_analysis_grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - timescaledb
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+
+volumes:
+  timescaledb_data:

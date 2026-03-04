@@ -4,9 +4,8 @@ from io import StringIO
 from typing import Dict
 from entsoe import EntsoePandasClient
 from config import PipelineConfig
-from utils import safe_query, fill_gaps_wrapper, correct_zero_values
+from utils import io, safe_query, fill_gaps_wrapper, correct_zero_values
 
-# --- GB SPECIAL CONSTANTS ---
 TIMEOUT = 60
 GB_GENERATION_TYPES = [
     "Biomass", "Fossil Gas", "Fossil Hard coal", "Fossil Oil", 
@@ -17,104 +16,70 @@ GB_GENERATION_TYPES = [
 # ==========================================
 # GENERATION & DEMAND
 # ==========================================
-
 def download_generation_demand(client: EntsoePandasClient, config: PipelineConfig):
-    """Downloads raw Gen/Demand data. Iterates strictly over TARGET ZONES."""
     if not config.data_types["generation"]: return
-
     raw_dir = config.get_output_path("generation_demand_data_bidding_zones") / "raw"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-
+    
     for bz in config.target_zones:
         print(f"[Download] Gen/Demand for {bz}...")
         gen_df, load_df = None, None
 
         if bz == "GB":
             try:
-                print("   -> Using BMRS API for GB...")
                 gen_df = download_GB_per_type_data(config.start, config.end)
                 load_df = download_GB_demand_data(config.start, config.end)
-            except Exception as e:
-                print(f"[Error] Failed to download GB data: {e}")
+            except Exception as e: print(f"[Error] Failed to download GB data: {e}")
         else:
             gen_df = safe_query(client.query_generation, context=f"Generation {bz}", country_code=bz, start=config.start, end=config.end, nett=True)
             load_df = safe_query(client.query_load, context=f"Load {bz}", country_code=bz, start=config.start, end=config.end)
 
-        if gen_df is not None: gen_df.to_csv(raw_dir / f"{bz}_raw_generation.csv")
-        if load_df is not None: load_df.to_csv(raw_dir / f"{bz}_raw_load.csv")
+        # Save raw downloaded data
+        io.save(gen_df, raw_dir / f"{bz}_raw_generation.csv", "raw_generation", config, bz=bz)
+        io.save(load_df, raw_dir / f"{bz}_raw_load.csv", "raw_load", config, bz=bz)
 
 def process_generation_demand(config: PipelineConfig) -> Dict[str, pd.DataFrame]:
-    """Cleans/Resamples data. Iterates over ALL ZONES to build full dataset."""
-    raw_dir = config.get_output_path("generation_demand_data_bidding_zones") / "raw"
-    out_dir = config.get_output_path("generation_demand_data_bidding_zones")
+    raw_dir, out_dir = config.get_output_path("generation_demand_data_bidding_zones") / "raw", config.get_output_path("generation_demand_data_bidding_zones")
     gaps_dir = config.get_gaps_path("generation_demand_data_bidding_zones")
     gen_storage_dict = {}
 
     for bz in config.zones:
-        gen_path = raw_dir / f"{bz}_raw_generation.csv"
-        load_path = raw_dir / f"{bz}_raw_load.csv"
-        if not gen_path.exists() and not load_path.exists(): continue
-
-        print(f"[Process] Gen/Demand for {bz}...")
-        gen_df = pd.read_csv(gen_path, index_col=0) if gen_path.exists() else None
-        load_df = pd.read_csv(load_path, index_col=0) if load_path.exists() else None
+        gen_path, load_path = raw_dir / f"{bz}_raw_generation.csv", raw_dir / f"{bz}_raw_load.csv"
+        gen_df = io.load(gen_path, "raw_generation", config, bz=bz)
+        load_df = io.load(load_path, "raw_load", config, bz=bz)
+        
+        if gen_df is None and load_df is None: continue
 
         if gen_df is not None:
-            gen_df.index = pd.to_datetime(gen_df.index, utc=True)
-            gen_df = gen_df.loc[:, ~gen_df.columns.duplicated()].apply(pd.to_numeric, errors='coerce')
-            gen_df = gen_df.resample("1h").mean()
-            
-            # --- GAP FILLING (Generation) ---
-            # Now passes directory and prefix directly
+            gen_df = gen_df.loc[:, ~gen_df.columns.duplicated()].apply(pd.to_numeric, errors='coerce').resample("1h").mean()
             gen_df = fill_gaps_wrapper(gen_df, gaps_dir, f"{bz}_gen")
-
-            # --- STORAGE EXTRACTION & AGGREGATION ---
-            storage_cols = ["Hydro Pumped Storage", "Energy storage"]
-            existing_storage = [c for c in storage_cols if c in gen_df.columns]
+            storage_cols = [c for c in ["Hydro Pumped Storage", "Energy storage"] if c in gen_df.columns]
             
-            if existing_storage:
-                # Sum the storage columns (fillna handles NaNs during addition)
-                storage_series = gen_df[existing_storage].fillna(0).sum(axis=1)
-                # Drop them so they aren't part of the regular generation clip/sum
-                gen_df = gen_df.drop(columns=existing_storage)
-            else:
-                storage_series = None
+            if storage_cols:
+                storage_series = gen_df[storage_cols].fillna(0).sum(axis=1)
+                gen_df = gen_df.drop(columns=storage_cols)
+            else: storage_series = None
 
-            # --- NEGATIVE CLIPPING ---
-            # Clip all remaining regular generation columns to 0 (removes negative station load)
             gen_df = gen_df.clip(lower=0.0)
-            
-            # --- TOTALS ---
             gen_df["Generation"] = gen_df.sum(axis=1)
-            
-            if storage_series is not None:
-                gen_df["Storage Discharge"] = storage_series.clip(lower=0.0)
-                gen_df["Storage Charge"] = storage_series.clip(upper=0.0).abs()
-            else:
-                gen_df["Storage Discharge"] = 0.0
-                gen_df["Storage Charge"] = 0.0
+            gen_df["Storage Discharge"] = storage_series.clip(lower=0.0) if storage_series is not None else 0.0
+            gen_df["Storage Charge"] = storage_series.clip(upper=0.0).abs() if storage_series is not None else 0.0
 
         if load_df is not None:
-            load_df.index = pd.to_datetime(load_df.index, utc=True)
             load_df = load_df.apply(pd.to_numeric, errors='coerce').resample("1h").mean()
-            
-            # --- GAP FILLING (Load) ---
             load_df = fill_gaps_wrapper(load_df, gaps_dir, f"{bz}_load")
 
         if gen_df is not None:
             if load_df is not None:
-                col_map = {"Actual Load": "Demand", "Load": "Demand"}
-                for k, v in col_map.items():
+                for k in ["Actual Load", "Load"]:
                     if k in load_df.columns: gen_df["Demand"] = load_df[k]
-                
                 gen_df["Total Generation"] = gen_df["Generation"] + gen_df["Storage Discharge"]
                 gen_df["Total Load"] = gen_df.get("Demand", 0) + gen_df["Storage Charge"]
                 gen_df["Net Export"] = gen_df["Total Generation"] - gen_df["Total Load"]
             
-            # Zero Correction (1-week patch)
             gen_df = correct_zero_values(gen_df, gaps_dir, bz, config)
             
-            gen_df.to_csv(out_dir / f"{bz}_generation_demand_data_bidding_zones.csv")
+            # Save processed generation and demand dataset
+            io.save(gen_df, out_dir / f"{bz}_generation_demand_data_bidding_zones.csv", "processed_generation", config, bz=bz)
             gen_storage_dict[bz] = gen_df
 
     return gen_storage_dict
@@ -122,149 +87,102 @@ def process_generation_demand(config: PipelineConfig) -> Dict[str, pd.DataFrame]
 # ==========================================
 # FLOWS
 # ==========================================
-
 def download_flows(client: EntsoePandasClient, config: PipelineConfig, flow_type: str = "commercial", dayahead: bool = False):
-    """
-    Downloads raw commercial or physical flows. 
-    Iterates strictly over TARGET ZONES as defined in config.
-    """
-    # Check if this data type is enabled in config
     if flow_type == "commercial" and not config.data_types.get(f"flows_commercial{'_dayahead' if dayahead else '_total'}"): return
     if flow_type == "physical" and not config.data_types.get("flows_physical"): return
 
-    # Determine output folder
-    if flow_type == "physical":
-        folder = "physical_flow_data_bidding_zones"
-    else:
-        folder = f"comm_flow_{'dayahead' if dayahead else 'total'}_bidding_zones"
-        
+    folder = "physical_flow_data_bidding_zones" if flow_type == "physical" else f"comm_flow_{'dayahead' if dayahead else 'total'}_bidding_zones"
     raw_dir = config.get_output_path(folder) / "raw"
-    raw_dir.mkdir(parents=True, exist_ok=True)
 
     for bz in config.target_zones:
         print(f"[Download] {flow_type} flows for {bz} (Dayahead={dayahead})...")
+
         flow_df = None
-        
-        # Iterate over neighbors
         for n in [z for z in config.neighbours_map[bz] if z in config.zones]:
-            out_label = f"{flow_type} {bz}->{n}"
-            in_label = f"{flow_type} {n}->{bz}"
-            
-            # Fetch Outgoing and Incoming flows
             if flow_type == "commercial":
-                f_out = safe_query(client.query_scheduled_exchanges, context=out_label, country_code_from=bz, country_code_to=n, start=config.start, end=config.end, dayahead=dayahead)
-                f_in = safe_query(client.query_scheduled_exchanges, context=in_label, country_code_from=n, country_code_to=bz, start=config.start, end=config.end, dayahead=dayahead)
+                f_out = safe_query(client.query_scheduled_exchanges, context=f"Out {bz}", country_code_from=bz, country_code_to=n, start=config.start, end=config.end, dayahead=dayahead)
+                f_in = safe_query(client.query_scheduled_exchanges, context=f"In {bz}", country_code_from=n, country_code_to=bz, start=config.start, end=config.end, dayahead=dayahead)
             else:
-                f_out = safe_query(client.query_crossborder_flows, context=out_label, country_code_from=bz, country_code_to=n, start=config.start, end=config.end)
-                f_in = safe_query(client.query_crossborder_flows, context=in_label, country_code_from=n, country_code_to=bz, start=config.start, end=config.end)
+                f_out = safe_query(client.query_crossborder_flows, context=f"Out {bz}", country_code_from=bz, country_code_to=n, start=config.start, end=config.end)
+                f_in = safe_query(client.query_crossborder_flows, context=f"In {bz}", country_code_from=n, country_code_to=bz, start=config.start, end=config.end)
 
-            # Concatenate flows, ensuring no duplicate indices interfere
-            if f_out is not None: 
-                f_out = f_out.loc[~f_out.index.duplicated(keep='first')]
-                flow_df = pd.concat([flow_df, f_out.to_frame(name=f"{bz}_{n}")], axis=1)
-            
-            if f_in is not None: 
-                f_in = f_in.loc[~f_in.index.duplicated(keep='first')]
-                flow_df = pd.concat([flow_df, f_in.to_frame(name=f"{n}_{bz}")], axis=1)
+            if f_out is not None: flow_df = pd.concat([flow_df, f_out.loc[~f_out.index.duplicated()].to_frame(name=f"{bz}_{n}")], axis=1)
+            if f_in is not None: flow_df = pd.concat([flow_df, f_in.loc[~f_in.index.duplicated()].to_frame(name=f"{n}_{bz}")], axis=1)
 
-        # Save raw file if data was found
         if flow_df is not None: 
-            flow_df = flow_df.loc[~flow_df.index.duplicated(keep='first')]
-            flow_df.to_csv(raw_dir / f"{bz}_raw_flows.csv")
+            table_name = f"raw_{flow_type}_flows" + ("_da" if dayahead else "")
+            io.save(flow_df.loc[~flow_df.index.duplicated()], raw_dir / f"{bz}_raw_flows.csv", table_name, config, bz=bz)
 
 def process_flows(config: PipelineConfig, flow_type: str = "commercial", dayahead: bool = False) -> Dict[str, pd.DataFrame]:
-    """Processes flows for ALL ZONES."""
-    
-    if flow_type == "physical":
-        folder = "physical_flow_data_bidding_zones"
-    else:
-        folder = f"comm_flow_{'dayahead' if dayahead else 'total'}_bidding_zones"
-        
-    raw_dir, out_dir = config.get_output_path(folder) / "raw", config.get_output_path(folder)
-    gaps_dir = config.get_gaps_path(folder)
+    folder = "physical_flow_data_bidding_zones" if flow_type == "physical" else f"comm_flow_{'dayahead' if dayahead else 'total'}_bidding_zones"
+    raw_dir, out_dir, gaps_dir = config.get_output_path(folder) / "raw", config.get_output_path(folder), config.get_gaps_path(folder)
     flow_dict = {}
 
     for bz in config.zones:
-        raw_path = raw_dir / f"{bz}_raw_flows.csv"
-        if not raw_path.exists(): continue
+        table_name = f"raw_{flow_type}_flows" + ("_da" if dayahead else "")
+        df = io.load(raw_dir / f"{bz}_raw_flows.csv", table_name, config, bz=bz)
+        if df is None: continue
 
+        df = fill_gaps_wrapper(df.resample("1h").mean(), gaps_dir, f"{bz}_flows", config=config, bz=bz, flow_type=flow_type, dayahead=dayahead)
+        
         print(f"[Process] {flow_type} flows for {bz}...")
-        df = pd.read_csv(raw_path, index_col=0)
-        df.index = pd.to_datetime(df.index, utc=True)
-        df = df.resample("1h").mean()
-        
-        # --- GAP FILLING (Flows) ---
-        df = fill_gaps_wrapper(df, gaps_dir, f"{bz}_flows", config=config, bz=bz, 
-                               flow_type=flow_type, dayahead=dayahead)
-        
-        # Calculate Net Exports per neighbor
+
         net_df = pd.DataFrame(index=df.index)
         for n in [z for z in config.neighbours_map[bz] if z in config.zones]:
             if f"{bz}_{n}" in df.columns and f"{n}_{bz}" in df.columns:
                 net_df[f"{bz}_{n}_net_export"] = df[f"{bz}_{n}"] - df[f"{n}_{bz}"]
         
         net_df["Net Export"] = net_df.sum(axis=1)
-        final_df = pd.concat([df, net_df], axis=1)
-        
-        # Zero Correction (1-week patch)
-        final_df = correct_zero_values(final_df, gaps_dir, bz, config)
+        final_df = correct_zero_values(pd.concat([df, net_df], axis=1), gaps_dir, bz, config)
         
         filename = f"{bz}_comm_flow_{'dayahead' if dayahead else 'total'}_bidding_zones.csv" if flow_type == "commercial" else f"{bz}_physical_flow_data_bidding_zones.csv"
-        final_df.to_csv(out_dir / filename)
+        processed_table = f"processed_{flow_type}_flows" + ("_da" if dayahead else "")
+        io.save(final_df, out_dir / filename, processed_table, config, bz=bz)
         flow_dict[bz] = final_df
 
     return flow_dict
 
 def balance_flows_symmetry(data_dict, config, flow_type="commercial", dayahead=False):
-    """
-    Enforces flow symmetry (A->B == B->A).
-    Priority: If a zone has a processed '_zeros.csv' file, its data is treated as ground truth.
-    """
-    print(f"[Balance] Ensuring symmetry for {flow_type}...")
-    
-    # Setup paths
+    print(f"[Balance] Ensuring symmetry for {flow_type} flows...")
     folder = "physical_flow_data_bidding_zones" if flow_type == "physical" else f"comm_flow_{'dayahead' if dayahead else 'total'}_bidding_zones"
-    suffix = f"_{folder}.csv"
-    gaps_dir = config.get_gaps_path(folder)
+    gaps_dir, out_dir = config.get_gaps_path(folder), config.get_output_path(folder)
 
     for bz in data_dict:
-        # Check if this zone is a "Trusted Source" (has processed gaps file)
-        bz_is_trusted = (gaps_dir / f"{bz}_zeros.csv").exists()
-
+        bz_trusted = (gaps_dir / f"{bz}_zeros.csv").exists()
         for n in config.neighbours_map[bz]:
             if n not in data_dict: continue
-
-            # Define columns
-            bz_export, bz_import = f"{bz}_{n}", f"{n}_{bz}"
-            n_export, n_import = f"{n}_{bz}", f"{bz}_{n}"
-
-            if bz_export in data_dict[bz] and n_import in data_dict[n]:
-                # Check mismatch
-                if (data_dict[bz][bz_export] - data_dict[n][n_import]).abs().sum() > 1e-3:
-                    
-                    if bz_is_trusted:
-                        # Case A: Trust BZ. Overwrite Neighbor.
-                        data_dict[n][n_import] = data_dict[bz][bz_export].values
-                        data_dict[n][n_export] = data_dict[bz][bz_import].values
-                        
-                        # Fix Neighbor's Net Export
-                        if f"{n}_{bz}_net_export" in data_dict[n]:
-                            data_dict[n][f"{n}_{bz}_net_export"] = data_dict[n][n_export] - data_dict[n][n_import]
+            
+            # Define directional column names to standardize comparison
+            col_out = f"{bz}_{n}"
+            col_in = f"{n}_{bz}"
+            
+            # --- 1. RESOLVE DATA ASYMMETRY ---
+            if col_out in data_dict[bz] and col_in in data_dict[bz] and col_out in data_dict[n] and col_in in data_dict[n]:
+                # Check for discrepancies in identical directional flows reported by adjacent zones
+                if (data_dict[bz][col_out] - data_dict[n][col_out]).abs().sum() > 1e-3 or \
+                   (data_dict[bz][col_in] - data_dict[n][col_in]).abs().sum() > 1e-3:
+                    if bz_trusted:
+                        data_dict[n][col_out] = data_dict[bz][col_out].values
+                        data_dict[n][col_in] = data_dict[bz][col_in].values
                     else:
-                        # Case B: Trust Neighbor. Overwrite BZ.
-                        data_dict[bz][bz_export] = data_dict[n][n_import].values
-                        data_dict[bz][bz_import] = data_dict[n][n_export].values
+                        data_dict[bz][col_out] = data_dict[n][col_out].values
+                        data_dict[bz][col_in] = data_dict[n][col_in].values
+            
+            # --- 2. CALCULATE NET EXPORTS ---
+            # Compute net exchange (Exports - Imports) consistently across both zones
+            if col_out in data_dict[bz] and col_in in data_dict[bz]:
+                data_dict[bz][f"{col_out}_net_export"] = data_dict[bz][col_out] - data_dict[bz][col_in]
+            if col_out in data_dict[n] and col_in in data_dict[n]:
+                data_dict[n][f"{col_in}_net_export"] = data_dict[n][col_in] - data_dict[n][col_out]
 
-                        # Fix BZ's Net Export
-                        if f"{bz}_{n}_net_export" in data_dict[bz]:
-                            data_dict[bz][f"{bz}_{n}_net_export"] = data_dict[bz][bz_export] - data_dict[bz][bz_import]
-
-    # Recalculate Total Net Exports and Save
-    out_dir = config.get_output_path(folder)
+    # --- 3. RECALCULATE TOTAL NET EXPORT ---
     for bz, df in data_dict.items():
         net_cols = [c for c in df.columns if "net_export" in c and c != "Net Export"]
         if net_cols: df["Net Export"] = df[net_cols].sum(axis=1)
-        df.to_csv(out_dir / f"{bz}{suffix}")
+        
+        suffix = f"_{folder}.csv"
+        processed_table = f"balanced_{flow_type}_flows" + ("_da" if dayahead else "")
+        io.save(df, out_dir / f"{bz}{suffix}", processed_table, config, bz=bz)
 
     return data_dict
 
@@ -386,14 +304,13 @@ def fetch_simple_metrics(client, config):
                 
                 df.index = pd.to_datetime(df.index, utc=True)
                 
-                # --- APPLY SIGN CORRECTION PATCH ---
-                # Only apply to Net Positions, only for Italian zones, and only for the year 2025
+                # --- Adjust known sign convention inconsistencies ---
+                # ENTSO-E net position sign conventions for Italian zones inverted in 2025
                 if name == "net_positions_dayahead" and bz.startswith("IT"):
-                    # Check if the data falls in 2025 (using the index to be absolutely safe)
                     mask_2025 = df.index.year == 2025
                     if mask_2025.any():
-                        print(f"  -> [PATCH] Inverting signs for {bz} 2025 Net Positions due to ENTSO-E reporting error.")
+                        print(f"  -> Adjusting sign convention for {bz} 2025 Net Positions.")
                         df.loc[mask_2025] = df.loc[mask_2025] * -1
-                # -----------------------------------
+                # --------------------------------------------------
                 
                 df.resample("1h").mean().to_csv(out_dir / f"{bz}_{name}.csv")
