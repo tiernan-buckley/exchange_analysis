@@ -108,7 +108,7 @@ docker compose up -d
 Ensure your environment is activated (`conda activate exchange-analysis`) and execute the main script:
 
 ```bash
-python main.py
+python src/main.py
 
 ```
 
