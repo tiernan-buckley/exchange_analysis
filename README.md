@@ -134,8 +134,6 @@ streamlit run src/app.py
 
 **Dashboard Features:**
 
-**Dashboard Features:**
-
 * **Methodology Comparison:** Visualises how standard commercial/physical flows and advanced flow tracing algorithms alter the perceived cross-border exchanges and imported fuel mixes for any given hour.
 * **Interactive Flow Mapping:** Dynamic, curved arrows scaled by MW volume represent real-time exchanges. The map is fully interactive—users can click any bidding zone to instantly update the dashboard focus.
 * **Net Position Tracking:** Highlights the selected bidding zone using thermal tinting (Green for Export, Blue for Import) and features an hourly trend bar chart to monitor intra-day market shifts.
