@@ -128,8 +128,12 @@ class DataIO:
                 df.index = pd.to_datetime(df.index, utc=True)
                 df.index.name = None
                 
-                if "bidding_zone" in df.columns:
-                    df = df.drop(columns=["bidding_zone"])
+                if bz is not None:
+                    if "bidding_zone" in df.columns:
+                        df = df.drop(columns=["bidding_zone"])
+                else:
+                    # If bz is None (Global Load), we keep the column 
+                    pass
                     
                 df.dropna(axis=1, how='all', inplace=True)
                 return df

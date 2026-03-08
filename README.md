@@ -2,7 +2,7 @@
 
 This project analyses data available through the ENTSO-E API using multiple methods (e.g. flow tracing, pooling), in order to determine the import sources and export sinks in the European electricity market on a per bidding zone and per type basis, for each bidding zone in the network.
 
-In addition to generating local CSV outputs, this project includes an **optional** fully containerized **TimescaleDB (PostgreSQL) and Grafana stack** for high-performance querying and interactive time-series visualization.
+In addition to generating local CSV outputs, this project includes an **optional** fully containerised **TimescaleDB (PostgreSQL) and Grafana stack** for high-performance querying and interactive time-series visualisation, as well as an optional **Streamlit** web app for interactive visualisation.
 
 Import/export results for the following methods can be calculated:
 
@@ -16,9 +16,13 @@ Import/export results for the following methods can be calculated:
 ## 🛠️ Prerequisites
 
 * **Python:** 3.10 or higher recommended.
-* **Anaconda** (Recommended) or standard Python installation.
-* **ENTSO-E API Key:** Required for downloading data. You can obtain a free API key by registering on the [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) and requesting "Restful API Access" in your account settings.
+* **ENTSO-E API Key:** Required for downloading data. Obtain a free API key by registering on the [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) and requesting "Restful API Access" in your account settings.
 * **Docker Desktop** *(Optional)*: Only required if you want to run the local TimescaleDB database and Grafana dashboard.
+* **Geospatial Libraries** *(Optional)*: For running the **Streamlit** web app (Step 4), **geopandas** requires system-level dependencies for GIS data (**GDAL, PROJ, GEOS**).
+* **Windows/Mac:** Using **Conda** is strongly recommended as it handles these dependencies automatically.
+* **Linux:** You must install system headers first: `sudo apt install libgdal-dev`.
+
+
 
 ---
 
@@ -30,7 +34,9 @@ Import/export results for the following methods can be calculated:
 
 It is highly recommended to use a virtual environment to avoid conflicts.
 
-**Option A: Using Conda (Recommended)**
+**Option A: Using Conda (Recommended for Dashboard users)**
+
+This handles complex geospatial dependencies automatically.
 
 ```bash
 # Create the environment
@@ -38,6 +44,9 @@ conda create -n exchange-analysis python=3.10
 
 # Activate it
 conda activate exchange-analysis
+
+# Install geospatial dependencies via conda
+conda install -c conda-forge geopandas
 
 ```
 
@@ -56,7 +65,7 @@ source venv/bin/activate
 
 ### 3. Install Dependencies
 
-Run this command inside your activated environment:
+Regardless of the option chosen above, run this command inside your activated environment to ensure all UI and data tools are present:
 
 ```bash
 pip install -r requirements.txt
@@ -87,14 +96,14 @@ Open `main.py` to adjust the **Control Panel** section:
 
 * **Output Destinations:** Choose where to save your processed data (e.g., save to flat CSV files, push directly to the PostgreSQL/TimescaleDB database, or both).
 * **Run Flags:** Set steps to `True` or `False` (e.g., set `download: False` if you already have the data).
-* **Period:** Set your start and end dates (e.g., `"2024-01-01 00:00"`, `"2024-12-31 23:59"`). Output directories are organized by years, so the best practice is to use a full year.
+* **Period:** Set your start and end dates (e.g., `"2024-01-01 00:00"`, `"2024-12-31 23:59"`). Output directories are organised by years, so the best practice is to use a full year.
 * **Subsets:** Uncomment `selected_bzs`/`target_zones` if you only want to download data for specific bidding zones (e.g., `["DE_LU", "FR"]`), and `selected_data_types`/`data_types` to download specific types of data.
 
 ### Step 2: (Optional) Start the Database & Dashboard Stack
 
 If you chose to save your outputs to the database in the Control Panel, you need to spin up the local server *before* running the Python script.
 
-Ensure Docker is running on your machine, then execute:
+Ensure **Docker Desktop** is running on your machine, then execute:
 
 ```bash
 docker compose up -d
@@ -114,24 +123,32 @@ python src/main.py
 
 Real-time logs will appear in your terminal, and detailed logs are saved to `logs/log_{TIMESTAMP}.log`.
 
-### Step 4: View the Results
+### Step 4: Launch the Interactive Dashboard (Optional)
 
-Depending on the outputs selected in the Control Panel:
+Visualise the flows and import mix using the **Streamlit** app:
 
-* **Flat Files:** Check the `outputs/` folder for the generated CSV time series.
-* **Interactive Dashboards:** Open your browser to **`http://localhost:3001`** (Login: `admin` / `admin`). Navigate to **Connections > Data Sources** to verify TimescaleDB is connected (click `Start & test`), and view all matrices mapped over time!
+```bash
+streamlit run src/app.py
+
+```
+
+**Dashboard Features:**
+
+* **Methodology Comparison:** Visualises physical/commercial flows and import mixes for each bidding zone and each flow methodology for a given hour.
+* **Thermal Net Position:** Highlights the selected bidding zone and shows its net position via thermal tinting (Green for Export, Blue for Import).
+* **Generation Mix vs Demand:** Displays the internal generation mix stacked by fuel type, overlaid with a total demand line to identify import requirements.
+* **Curved Flow Mapping:** Dynamic curved arrows scaled by MW volume representing real-time exchanges.
 
 ---
 
 ## 📂 Flat Files Directory
 
-Import results are saved on a per bidding zone, per type, and "per bidding zone per type" basis as CSV time series in the `outputs/` directory, organized by year. Exports are only saved as totals, as export time series would be essentially a duplicate of import time series results. The following folders can be generated:
+Import results are saved on a per bidding zone, per type, and "per bidding zone per type" basis as CSV time series in the `outputs/` directory, organised by year. Exports are only saved as totals, as export time series would be essentially a duplicate of import time series results. The following folders can be generated:
 
-* **`generation_demand_data.../`**: Hourly generation and load used for determining per type mixes of import/export, and used in direct flow tracing.
-* **`comm_flow_total.../`**: Hourly commercial flow total exchanges, determines import results using in-coming line values or by netting over both directions, used as input to pooling approach.
-* **`physical_flow_data.../`**: Physical cross-border flows, used as input to pooling approach and flow tracing.
+* **`generation_demand_data.../`**: Hourly generation and load used for determining per type mixes of import/export.
+* **`comm_flow_total.../`**: Hourly commercial flow total exchanges, used as input to pooling approach.
+* **`physical_flow_data.../`**: Physical cross-border flows, used as input to pooling and flow tracing.
 * **`import_flow_tracing.../`**: Import source values as a result of flow tracing analysis.
-* **`pooling/`**: Import source values as a result of flow tracing analysis.
 * **`annual_totals_per_method/`**: Final aggregated TWh import and export totals.
 
 ---
@@ -139,19 +156,11 @@ Import results are saved on a per bidding zone, per type, and "per bidding zone 
 ## ✍️ Author
 
 **Tiernan Buckley**
+
 * **Project:** Master's Thesis in Sustainable Systems Engineering at the University of Freiburg
 * **Contact:** tbuckle@tcd.ie
 * **GitHub:** [@tiernan-buckley](https://github.com/tiernan-buckley)
 
-## 📄 License
+## 📄 Licence
 
-This project is licensed under the **Creative Commons Attribution 4.0 International License (CC BY 4.0)**.
-
-You are free to:
-* **Share** — copy and redistribute the material in any medium or format.
-* **Adapt** — remix, transform, and build upon the material for any purpose, even commercially.
-
-**Under the following terms:**
-* **Attribution** — You must give appropriate credit, provide a link to the license, and indicate if changes were made. You may do so in any reasonable manner, but not in any way that suggests the licensor endorses you or your use.
-
-To view a copy of this license, visit http://creativecommons.org/licenses/by/4.0/ or read the `LICENSE` file included in this repository.
+This project is licensed under the **Creative Commons Attribution 4.0 International Licence (CC BY 4.0)**.

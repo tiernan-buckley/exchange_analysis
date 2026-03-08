@@ -285,10 +285,18 @@ def perform_aggregated_flow_tracing(
         except: 
             # Catch Singular Matrices (e.g. disconnected grid islands or missing data)
             sing_times.append(t)
+            print(f"Singular Matrix at time: {t}")
             for x in config.zones:
                 agg_tracing[x].loc[t] = np.nan
             
-    io.save(pd.DataFrame(sing_times, columns=["Timepoints"]), agg_dir / "incalculable_timepoints/incalculable_timepoints.csv", "tracing_ac_missing_times", config)
+    # Save singular times to a flat CSV log only if anomalies occurred
+    log_path = agg_dir / "incalculable_timepoints/incalculable_timepoints.csv"
+    if sing_times:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(sing_times, columns=["Timepoints"]).to_csv(log_path, index=False)
+    elif log_path.exists():
+        log_path.unlink()
+        
     _decompose_and_save(config, agg_tracing, agg_dir, "agg_coupling", gen_dfs_loaded)
 
 def perform_direct_flow_tracing(
@@ -307,7 +315,7 @@ def perform_direct_flow_tracing(
         if bz in phys_flow_dfs_loaded: phys_flow_dfs_loaded[bz] = phys_flow_dfs_loaded[bz].resample("1h").mean().fillna(0)
 
     dir_tracing = {bz: pd.DataFrame(0.0, index=config.time_index, columns=config.zones, dtype=float) for bz in config.zones}
-    dir_dir = config.output_dir / "import_flow_tracing_bidding_zones/direct_coupling" / str(config.year)
+    direct_dir = config.output_dir / "import_flow_tracing_bidding_zones/direct_coupling" / str(config.year)
     sing_times: List[pd.Timestamp] = []
     
     print("[Direct Coupling] Inverting Matrices...")
@@ -322,8 +330,17 @@ def perform_direct_flow_tracing(
             A_arr: List[float] = [0.0] * len(config.zones)
             exports: float = 0.0
             
-            gen_val = float(gen_dfs_loaded[bz].at[t, "Total Generation"])
-            load_val = float(gen_dfs_loaded[bz].at[t, "Total Load"])
+            # Use .get() or check if the index exists to prevent a crash on missing hours
+            if t in gen_dfs_loaded[bz].index:
+                gen_val = float(gen_dfs_loaded[bz].at[t, "Total Generation"])
+                load_val = float(gen_dfs_loaded[bz].at[t, "Total Load"])
+            else:
+                # If the hour is missing, we assume 0 or use the previous hour's value
+                gen_val = 0.0
+                load_val = 0.0
+                # Optional: Log a warning so you know which data is missing
+                print(f"Warning: Missing generation data for {bz} at {t}")
+
             net_exp = float(phys_flow_dfs_loaded[bz].at[t, "Net Export"])
             
             alt_gen = load_val + net_exp
@@ -357,11 +374,19 @@ def perform_direct_flow_tracing(
         except: 
             # Catch Singular Matrices (e.g. disconnected grid islands or missing data)
             sing_times.append(t)
+            print(f"Singular Matrix at time: {t}")
             for x in config.zones:
                 dir_tracing[x].loc[t] = np.nan
     
-    io.save(pd.DataFrame(sing_times, columns=["Timepoints"]), dir_dir / "incalculable_timepoints/incalculable_timepoints.csv", "tracing_dc_missing_times", config)
-    _decompose_and_save(config, dir_tracing, dir_dir, "direct_coupling", gen_dfs_loaded)
+    # Save singular times to a flat CSV log only if anomalies occurred
+    log_path = direct_dir / "incalculable_timepoints/incalculable_timepoints.csv"
+    if sing_times:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(sing_times, columns=["Timepoints"]).to_csv(log_path, index=False)
+    elif log_path.exists():
+        log_path.unlink()
+        
+    _decompose_and_save(config, dir_tracing, direct_dir, "direct_coupling", gen_dfs_loaded)
 
 # ==========================================
 # PART 3: POOLING
@@ -485,10 +510,16 @@ def perform_post_processing_aggregation(config: PipelineConfig) -> None:
         if drop and drop in df.columns: df = df.drop(columns=[drop])
         return df
 
+    # Safely load the singular times log directly from CSV, if it exists
     missing_times: pd.DatetimeIndex = pd.DatetimeIndex([])
-    missing_df = io.load(base_out / f"import_flow_tracing_bidding_zones/agg_coupling/{year}/incalculable_timepoints/incalculable_timepoints.csv", "tracing_ac_missing_times", config)
-    if missing_df is not None and "Timepoints" in missing_df.columns: 
-        missing_times = pd.to_datetime(missing_df["Timepoints"], utc=True)
+    missing_log_path = base_out / f"import_flow_tracing_bidding_zones/agg_coupling/{year}/incalculable_timepoints/incalculable_timepoints.csv"
+    if missing_log_path.exists():
+        try:
+            missing_df = pd.read_csv(missing_log_path)
+            if not missing_df.empty and "Timepoints" in missing_df.columns:
+                missing_times = pd.to_datetime(missing_df["Timepoints"], utc=True)
+        except pd.errors.EmptyDataError:
+            pass
 
     gen_dir = config.get_output_path("generation_demand_data_bidding_zones")
     gen_fractions: Dict[str, pd.DataFrame] = {}
