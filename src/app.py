@@ -274,7 +274,37 @@ st.set_page_config(page_title="European Grid Analysis", layout="wide")
 # Hide native delta arrows and force padding
 st.markdown("<style>.main > div {padding-left: 2rem; padding-right: 2rem; max-width: 100%;} [data-testid='stMetricDelta'] svg { display: none !important; }</style>", unsafe_allow_html=True)
 
-st.title("⚡ European Electricity Market Exchange Analysis")
+#st.title("European Electricity Market Exchange Analysis")
+st.markdown("""
+    <style>
+        /* This targeting may vary slightly by Streamlit version, but works for 1.30+ */
+        [data-testid="stHeader"] {
+            background-color: rgba(255, 255, 255, 0); /* Make default header transparent */
+        }
+        
+        .sticky-title {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            background-color: white;
+            padding: 1rem 2rem;
+            margin-left: 18rem; /* Match this to your sidebar width */
+            z-index: 999;
+            border-bottom: 1px solid #e6e6e6;
+        }
+
+        /* Add padding to the top of the main content so it's not hidden behind the fixed title */
+        .main .block-container {
+            padding-top: 5rem;
+        }
+    </style>
+    
+    <div class="sticky-title">
+        <h2 style="margin:0;">European Electricity Market Exchange Analysis</h2>
+    </div>
+""", unsafe_allow_html=True)
+
 active_zones = get_clean_zones()
 
 # State initialization
@@ -354,8 +384,30 @@ if gen_df is not None and not gen_df.empty:
             if active_flows: st.dataframe(pd.DataFrame(active_flows).sort_values(by="MW", ascending=False), width="stretch", hide_index=True)
     
     with col_analysis:
-        # Metric
+        # --- 0. Methodology Context Badge ---
+        # Provides a clear "Headline" for the analysis column
+        method_desc = {
+            "Physical": "Real-time metered (netted) cross-border flows.",
+            "Commercial Total": "Netted scheduled intraday exchanges.",
+            "Commercial Day-Ahead": "Daily auction market results only.",
+            "Agg. Coupling Flow Tracing": "Flow tracing with Net Position as zone's input to network",
+            "Direct Coupling Flow Tracing": "Flow tracing with Generation & Demand magnitudes as zone's input to network",
+            "Net Pooled CFT": "Net exporters (CFT Net Position) proportionally supply all net importers in network."
+        }
+
         color = "#28a745" if net_val >= 0 else "#007bff"
+        
+        # Display the method as a prominent badge with an explanatory tooltip
+        st.markdown(f"""
+            <div style="background-color: #f8f9fa; border-left: 5px solid {color}; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
+                <small style="color: #6c757d; text-transform: uppercase; font-weight: bold;">Current Methodology</small><br>
+                <span style="font-size: 1.1rem; font-weight: 500;">{st.session_state.flow_method}</span>
+                <p style="margin: 0; font-size: 0.85rem; color: #495057;">{method_desc.get(st.session_state.flow_method, "")}</p>
+            </div>
+        """, unsafe_allow_html=True)
+
+        # Net Position Metric
+        #color = "#28a745" if net_val >= 0 else "#007bff"
         st.markdown(f"<style>[data-testid='stMetricDelta'] > div {{ color: {color} !important; }}</style>", unsafe_allow_html=True)
         st.metric(f"{st.session_state.target_bz} Net Position", f"{net_val:.2f} GW", f"{'↑' if net_val >= 0 else '↓'} Net {'Exporting' if net_val >= 0 else 'Importing'}")
         
@@ -399,7 +451,7 @@ if gen_df is not None and not gen_df.empty:
         
         # 3. Traced Imported Energy Mix Chart
         if import_mix_df is not None and not import_mix_df.empty:
-            st.caption(f"🌍 Imported Energy Mix")
+            st.caption(f"🌍 {st.session_state.target_bz} Imported Energy Mix")
             fig = go.Figure()
             for c in [x for x in import_mix_df.columns if x in GEN_COLORS.keys()]:
                 fig.add_trace(go.Scatter(x=import_mix_df.index.hour, y=import_mix_df[c]/1000, name=c, mode='lines', stackgroup='one', line=dict(width=0, color=GEN_COLORS.get(c, "#95a5a6"))))
@@ -411,7 +463,7 @@ if gen_df is not None and not gen_df.empty:
             )
             st.plotly_chart(fig, width="stretch")
         else: 
-            st.caption(f"🌍 Imported Energy Mix (N/A)")
+            st.caption(f"🌍 {st.session_state.target_bz} Imported Energy Mix (N/A)")
             st.info(f"Breakdown not calculated for {st.session_state.flow_method}.")
             st.empty() 
 
