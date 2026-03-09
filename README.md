@@ -1,5 +1,5 @@
 # European Electricity Market Exchange Analysis
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)]([https://eu-grid-analysis-test.streamlit.app/](https://european-grid-exchange-analysis.streamlit.app/))
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://european-grid-exchange-analysis.streamlit.app/)
 
 This project analyses data available through the ENTSO-E API using multiple methods (e.g. flow tracing, pooling), in order to determine the import sources and export sinks in the European electricity market on a per bidding zone and per type basis, for each bidding zone in the network.
 
