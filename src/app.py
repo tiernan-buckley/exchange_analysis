@@ -381,10 +381,20 @@ if full_day_df is not None and not full_day_df.empty:
         if gen_df is not None and not gen_df.empty:
             fig = go.Figure()
             pos_cols = [c for c in gen_df.columns if c in GEN_COLORS.keys() and c not in ['Storage Charge', 'Total Load', 'Demand']]
-            for c in pos_cols: fig.add_trace(go.Scatter(x=gen_df.index.hour, y=gen_df[c]/1000, name=c, mode='lines', stackgroup='pos', line=dict(width=0, color=GEN_COLORS[c])))
-            fig.update_layout(height=220, margin=dict(l=0, r=0, t=5, b=0), legend=dict(orientation="h", y=-0.5), hovermode="x unified")
-            st.plotly_chart(fig, width="stretch", key="gen_mix_chart")
-        else: st.info(f"Generation mix missing for {st.session_state.target_bz}.")
+            for c in pos_cols: 
+                fig.add_trace(go.Scatter(x=gen_df.index.hour, y=gen_df[c]/1000, name=c, mode='lines', stackgroup='pos', line=dict(width=0, color=GEN_COLORS[c])))
+            if 'Storage Charge' in gen_df.columns:
+                charge_vals = -np.abs(gen_df['Storage Charge']) / 1000
+                fig.add_trace(go.Scatter(x=gen_df.index.hour, y=charge_vals, name='Storage Charge', mode='lines', stackgroup='neg', line=dict(width=0, color=GEN_COLORS['Storage Charge']), hovertemplate="%{customdata} GW", customdata=np.abs(charge_vals)))
+            if 'Demand' in gen_df.columns:
+                fig.add_trace(go.Scatter(x=gen_df.index.hour, y=gen_df['Demand']/1000, name='Demand', line=dict(color='#2c3e50', width=3, dash='dot')))
+            elif 'Total Load' in gen_df.columns: 
+                fig.add_trace(go.Scatter(x=gen_df.index.hour, y=gen_df['Total Load']/1000, name='Total Load', line=dict(color='#2c3e50', width=3, dash='dot')))
+            fig.add_vline(x=st.session_state.hour_val, line_width=2, line_dash="dash", line_color="white")
+            fig.update_layout(height=220, margin=dict(l=0, r=0, t=5, b=0), xaxis=dict(range=[-0.5, 23.5]), yaxis=dict(title="GW", zeroline=True, zerolinecolor='black', zerolinewidth=1.5), legend=dict(orientation="h", y=-0.5), hovermode="x unified")
+            st.plotly_chart(fig, width="stretch")
+        else:
+            st.info(f"Generation mix data not available for {st.session_state.target_bz} on this date.")
 
         st.write("---")
         
