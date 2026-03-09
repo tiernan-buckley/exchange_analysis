@@ -212,17 +212,27 @@ def extract_arrow_flows(target_bz, hourly_all, active_zones, flow_settings, sele
 # 3. MAP GENERATOR
 # ==========================================
 
+# ==========================================
+# 3. MAP GENERATOR
+# ==========================================
+
 def draw_flow_map(geo_df, geoj, flows, target_bz, net_position_gw):
-    """Renders map with 'Badged' flow labels for maximum readability."""
+    """Renders map with 'Badged' flow labels and black target border."""
     fig = go.Figure()
-    relevant_lons, relevant_lats = [geo_df.loc[target_bz, 'lon']], [geo_df.loc[target_bz, 'lat']]
+    relevant_lons = [geo_df.loc[target_bz, 'lon']]
+    relevant_lats = [geo_df.loc[target_bz, 'lat']]
     
-    # Base Choropleth Layer
+    # Base Choropleth Layer: Conditional border coloring for target_bz
     fig.add_trace(go.Choropleth(
         geojson=geoj, locations=geo_df.index, 
-        z=[(1 if i==target_bz and net_position_gw>=0 else -1 if i==target_bz else 0) for i in geo_df.index],
+        z=[(1 if i == target_bz and net_position_gw >= 0 else 
+            -1 if i == target_bz else 0) for i in geo_df.index],
         colorscale=[[0, '#e3f2fd'], [0.5, '#ffffff'], [1, '#e8f5e9']], 
-        showscale=False, marker_line_color='#adb5bd', marker_line_width=0.8,
+        showscale=False, 
+        marker_line_color=['#000000' if i == target_bz else '#adb5bd' 
+                           for i in geo_df.index],
+        marker_line_width=[2.0 if i == target_bz else 0.8 
+                           for i in geo_df.index],
         text=[f"<b>{i}</b>" for i in geo_df.index], hoverinfo="text"
     ))
     
@@ -230,43 +240,49 @@ def draw_flow_map(geo_df, geoj, flows, target_bz, net_position_gw):
                  'Import': {'l': 'rgba(0, 123, 255, 0.4)', 'a': '#007bff'}}
     
     for flow in flows:
-        if flow['Source'] not in geo_df.index or flow['Target'] not in geo_df.index: continue
-        p1, p2 = (geo_df.loc[flow['Source'], 'lon'], geo_df.loc[flow['Source'], 'lat']), \
-                 (geo_df.loc[flow['Target'], 'lon'], geo_df.loc[flow['Target'], 'lat'])
-        relevant_lons.extend([p1[0], p2[0]]); relevant_lats.extend([p1[1], p2[1]])
+        if flow['Source'] not in geo_df.index or flow['Target'] not in geo_df.index: 
+            continue
+        p1 = (geo_df.loc[flow['Source'], 'lon'], geo_df.loc[flow['Source'], 'lat'])
+        p2 = (geo_df.loc[flow['Target'], 'lon'], geo_df.loc[flow['Target'], 'lat'])
+        relevant_lons.extend([p1[0], p2[0]])
+        relevant_lats.extend([p1[1], p2[1]])
         c = COLOR_MAP.get(flow['Type'])
         cLons, cLats = get_curve(p1, p2)
         
         # 1. Flow Vectors (Curved lines)
-        fig.add_trace(go.Scattergeo(lon=cLons, lat=cLats, mode='lines', 
-                                    line=dict(width=max(1.5, flow['MW']/500), color=c['l']), 
-                                    hoverinfo='skip'))
+        fig.add_trace(go.Scattergeo(
+            lon=cLons, lat=cLats, mode='lines', 
+            line=dict(width=max(1.5, flow['MW']/500), color=c['l']), 
+            hoverinfo='skip'))
         
         mid = len(cLons)//2
         
-        # 2. Value Badge: High-visibility white background box for MW data
+        # 2. Value Badge: MW data in white background box
         fig.add_trace(go.Scattergeo(
             lon=[cLons[mid]], lat=[cLats[mid]], mode='markers+text',
             text=[f"<b>{flow['MW']/1000:.1f}</b>"], textposition="middle center",
-            marker=dict(size=24, color='white', symbol='square', line=dict(color=c['a'], width=1)),
+            marker=dict(size=24, color='white', symbol='square', 
+                        line=dict(color=c['a'], width=1)),
             textfont=dict(size=10, color='black', family="Arial"),
-            hoverinfo='skip'
-        ))
+            hoverinfo='skip'))
 
-        # 3. Arrowhead: Positioned forward to clarify directionality
+        # 3. Arrowhead: Direction indicator
         arr_idx = min(mid + 3, len(cLons)-1)
         fig.add_trace(go.Scattergeo(
             lon=[cLons[arr_idx]], lat=[cLats[arr_idx]], mode='markers',
             marker=dict(size=10, symbol='triangle-up', color=c['a'], 
-                        angle=get_bearing(cLons[mid], cLats[mid], cLons[arr_idx], cLats[arr_idx])),
-            hoverinfo='skip'
-        ))
+                        angle=get_bearing(cLons[mid], cLats[mid], 
+                                          cLons[arr_idx], cLats[arr_idx])),
+            hoverinfo='skip'))
 
     pad = 2.5
     fig.update_layout(
-        geo=dict(projection_type="mercator", lonaxis_range=[min(relevant_lons)-pad, max(relevant_lons)+pad], 
-                 lataxis_range=[min(relevant_lats)-pad, max(relevant_lats)+pad], visible=False), 
-        margin={"r":0,"t":0,"l":0,"b":0}, height=650, showlegend=False, clickmode='event+select'
+        geo=dict(projection_type="mercator", 
+                 lonaxis_range=[min(relevant_lons)-pad, max(relevant_lons)+pad], 
+                 lataxis_range=[min(relevant_lats)-pad, max(relevant_lats)+pad], 
+                 visible=False), 
+        margin={"r":0,"t":0,"l":0,"b":0}, height=650, 
+        showlegend=False, clickmode='event+select'
     )
     return fig
 
@@ -371,7 +387,8 @@ if full_day_df is not None and not full_day_df.empty:
         
         # 1. 24-hour Trend
         trend_fig = go.Figure(go.Bar(x=daily_trend.index.hour, y=daily_trend, marker_color=['#28a745' if v >= 0 else '#007bff' for v in daily_trend]))
-        trend_fig.update_layout(height=180, margin=dict(l=0, r=0, t=10, b=0), xaxis=dict(range=[-0.5, 23.5]), yaxis_title="GW")
+        trend_fig.add_vline(x=st.session_state.hour_val, line_width=2, line_dash="dash", line_color="#343a40")
+        trend_fig.update_layout(height=180, margin=dict(l=0, r=0, t=10, b=0), xaxis=dict(range=[-0.5, 23.5]), yaxis_title="GW", yaxis_zeroline=True, yaxis_zerolinecolor='black', yaxis_zerolinewidth=1)
         st.plotly_chart(trend_fig, width="stretch", key="trend_chart")
 
         # 2. Localized Generation (Secondary check)
@@ -391,7 +408,7 @@ if full_day_df is not None and not full_day_df.empty:
             elif 'Total Load' in gen_df.columns: 
                 fig.add_trace(go.Scatter(x=gen_df.index.hour, y=gen_df['Total Load']/1000, name='Total Load', line=dict(color='#2c3e50', width=3, dash='dot')))
             fig.add_vline(x=st.session_state.hour_val, line_width=2, line_dash="dash", line_color="white")
-            fig.update_layout(height=220, margin=dict(l=0, r=0, t=5, b=0), xaxis=dict(range=[-0.5, 23.5]), yaxis=dict(title="GW", zeroline=True, zerolinecolor='black', zerolinewidth=1.5), legend=dict(orientation="h", y=-0.5), hovermode="x unified")
+            fig.update_layout(height=220, margin=dict(l=0, r=0, t=5, b=0), xaxis=dict(range=[-0.5, 23.5]), yaxis=dict(title="GW", zeroline=True, zerolinecolor='black', zerolinewidth=1), legend=dict(orientation="h", y=-0.5), hovermode="x unified")
             st.plotly_chart(fig, width="stretch")
         else:
             st.info(f"Generation mix data not available for {st.session_state.target_bz} on this date.")
@@ -405,7 +422,12 @@ if full_day_df is not None and not full_day_df.empty:
             fig = go.Figure()
             for c in [x for x in import_mix_df.columns if x in GEN_COLORS.keys()]:
                 fig.add_trace(go.Scatter(x=import_mix_df.index.hour, y=import_mix_df[c]/1000, name=c, mode='lines', stackgroup='one', line=dict(width=0, color=GEN_COLORS.get(c, "#95a5a6"))))
-            fig.update_layout(height=220, margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", y=-0.5), hovermode="x unified")
+            fig.add_vline(x=st.session_state.hour_val, line_width=2, line_dash="dash", line_color="white")
+            fig.update_layout(
+                height=220, margin=dict(l=0, r=0, t=10, b=0), xaxis=dict(range=[-0.5, 23.5]), 
+                yaxis=dict(title="GW", zeroline=True, zerolinecolor='black', zerolinewidth=1), 
+                legend=dict(orientation="h", y=-0.5), hovermode="x unified" 
+            )
             st.plotly_chart(fig, width="stretch", key="import_mix_chart")
         else: st.info(f"Import decomposition unavailable for {st.session_state.flow_method}.")
 
