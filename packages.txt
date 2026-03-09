@@ -1,3 +1,5 @@
+libspatialindex-dev
+gdal-bin
 libgdal-dev
-g++
-python3-dev
+libgeos-dev
+libproj-dev
