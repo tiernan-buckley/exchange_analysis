@@ -1,15 +1,18 @@
+# grafana/provisioning/datasources/datasources.yml
 apiVersion: 1
+
 datasources:
   - name: TimescaleDB
     type: postgres
     access: proxy
+    # Inside the Docker network, we use the service name and internal port
     url: timescaledb:5432
-    database: exchange_analysis
-    user: thesis_admin
+    database: ${POSTGRES_DB}
+    user: ${POSTGRES_USER}
     secureJsonData:
-      password: secure_grid_password
+      password: ${POSTGRES_PASSWORD}
     jsonData:
-      sslmode: 'disable'
+      sslmode: 'disable' # Use 'require' in true production/cloud environments
       postgresVersion: 1500
       timescaledb: true
     isDefault: true

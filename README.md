@@ -75,15 +75,51 @@ pip install -r requirements.txt
 
 ---
 
-## 🔑 Configuration
+## 🔑 Configuration & Environment Variables
 
-You must create a `keys.yaml` file in the **root directory** of the project to store your API key. 
+This project uses a `.env` file to securely manage API keys, database credentials, and system settings across both the Python application and the Docker containers.
 
-1. Create a file named `keys.yaml`.
-2. Paste the following content into it:
+**Setup Instructions:**
 
-```yaml
-entsoe-key: "YOUR-UUID-API-KEY-HERE"
+1. In the **root directory** of the project, locate the file named `.env.example`.
+2. Rename this file to exactly **`.env`** (or create a new file named `.env`).
+3. Open the `.env` file and replace the placeholder values (especially `ENTSOE_API_KEY`) with your actual credentials.
+
+```bash
+# ==============================================================================
+# DATABASE CONFIGURATION (PostgreSQL / TimescaleDB)
+# ==============================================================================
+# Internal database credentials used by the Docker container and the Python API.
+POSTGRES_USER=grid_analyst_admin
+POSTGRES_PASSWORD=replace_with_strong_password_123
+POSTGRES_DB=exchange_analysis
+
+# Connectivity settings for local development. 
+# Default Postgres is 5432; using 5433 to avoid local conflicts.
+DB_HOST=localhost
+DB_PORT=5433
+
+# ==============================================================================
+# MONITORING & VISUALIZATION (Grafana)
+# ==============================================================================
+# Web UI credentials for the Grafana monitoring dashboard.
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=replace_with_secure_admin_pass
+GRAFANA_PORT=3001
+
+# ==============================================================================
+# EXTERNAL API INTEGRATIONS
+# ==============================================================================
+# ENTSO-E Transparency Platform API Key. 
+# Obtain at: [https://transparency.entsoe.eu/](https://transparency.entsoe.eu/)
+ENTSOE_API_KEY="YOUR-UUID-API-KEY-HERE"
+
+# ==============================================================================
+# APPLICATION SETTINGS
+# ==============================================================================
+# LOG_LEVEL options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_LEVEL=INFO
+DEBUG_MODE=False
 
 ```
 
