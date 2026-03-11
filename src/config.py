@@ -12,9 +12,51 @@ Manages temporal boundaries, execution flags, I/O routing, and spatial (zonal) c
 
 import yaml
 import pandas as pd
+import logging
+import os
 from pathlib import Path
 from typing import Dict, Optional, Tuple, List, Any
-from mappings_alt import NEIGHBOURS
+from dotenv import load_dotenv
+from urllib.parse import quote_plus
+from sqlalchemy import create_engine
+
+load_dotenv()
+
+# --- API CREDENTIALS ---
+ENTSOE_API_KEY = os.getenv("ENTSOE_API_KEY")
+
+# Official Validation Logic
+if not ENTSOE_API_KEY:
+    raise EnvironmentError(
+        "CRITICAL: ENTSOE_API_KEY not found in .env file. "
+        "Please visit https://transparency.entsoe.eu/ to obtain a key."
+    )
+
+# --- DATABASE SETTINGS ---
+DB_USER = os.getenv("POSTGRES_USER")
+DB_PASS = os.getenv("POSTGRES_PASSWORD")
+DB_NAME = os.getenv("POSTGRES_DB")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5433")
+
+# --- LOGGING & DEBUG ---
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+DEBUG_MODE = os.getenv("DEBUG_MODE", "False").lower() == "true"
+
+# Initialize logger
+logger = logging.getLogger(__name__)
+
+def get_db_engine():
+    """Constructs the SQLAlchemy engine."""
+    if not all([DB_USER, DB_PASS, DB_NAME]):
+        raise EnvironmentError("Missing critical DB credentials in .env")
+        
+    encoded_pass = quote_plus(DB_PASS)
+    uri = f"postgresql://{DB_USER}:{encoded_pass}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+    debug = os.getenv("DEBUG_MODE", "False").lower() == "true"
+    
+    return create_engine(uri, echo=debug)
 
 class PipelineConfig:
     def __init__(
@@ -41,13 +83,15 @@ class PipelineConfig:
         # ==========================================
         self.start = pd.Timestamp(date_range[0], tz="UTC")
         raw_end = pd.Timestamp(date_range[1], tz="UTC")
+
+        self.log_level = os.getenv("LOG_LEVEL", "INFO")
+        self.debug_mode = os.getenv("DEBUG_MODE", "False").lower() == "true"
         
-        # --- TIME BOUNDARY CORRECTION ---
         # Shifts exact midnight end-dates back by 1 minute to prevent dangling 
         # indices that fall outside the API's inclusive hourly blocks.
         if raw_end.hour == 0 and raw_end.minute == 0:
             self.end = raw_end - pd.Timedelta(minutes=1)
-            print(f"[Config] Adjusted end date from {raw_end} to {self.end} for inclusive indexing.")
+            logger.info(f"[Config] Adjusted end date from {raw_end} to {self.end} for inclusive indexing.")
         else:
             self.end = raw_end
         
@@ -100,22 +144,27 @@ class PipelineConfig:
         # ==========================================
         # SPATIAL CONFIGURATION (ZONES & TOPOLOGY)
         # ==========================================
-        self.all_zones = list(NEIGHBOURS.copy().keys())
-        self.neighbours_map = NEIGHBOURS.copy()
+        yaml_path = self.project_root / "config.yaml"
+        if not yaml_path.exists():
+            raise FileNotFoundError(f"Config YAML not found at {yaml_path}")
+            
+        with open(yaml_path, 'r') as f:
+            topology_data = yaml.safe_load(f)
+            self.neighbours_map = topology_data.get('neighbours', {})
+            
+        self.all_zones = list(self.neighbours_map.keys())
         self._filter_zones()
 
         if target_zones:
             self.target_zones = [z for z in target_zones if z in self.all_zones]
-            print(f"Configured for subset of zones: {self.target_zones}")
+            logger.info(f"Configured for subset of zones: {self.target_zones}")
         else:
             self.target_zones = self.all_zones
 
         # ==========================================
         # CREDENTIALS & METADATA
         # ==========================================
-        # Looks for keys.yaml in the main project root
-        with open(self.project_root / key_file, "r") as f:
-            self.api_key = yaml.safe_load(f)["entsoe-key"]
+        self.api_key = ENTSOE_API_KEY
             
         self.gen_types_df = pd.read_csv(
             self.input_dir / "generation_data/gen_types_and_emission_factors.csv"

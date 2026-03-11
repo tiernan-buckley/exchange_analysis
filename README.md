@@ -19,8 +19,8 @@ Import/export results for the following methods can be calculated:
 * **ENTSO-E API Key:** Required for downloading data. Obtain a free API key by registering on the [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) and requesting "Restful API Access" in your account settings.
 * **Docker Desktop** *(Optional)*: Only required if you want to run the local TimescaleDB database and Grafana dashboard.
 * **Geospatial Libraries** *(Optional)*: For running the **Streamlit** web app (Step 4), **geopandas** requires system-level dependencies for GIS data (**GDAL, PROJ, GEOS**).
-* **Windows/Mac:** Using **Conda** is strongly recommended as it handles these dependencies automatically.
-* **Linux:** You must install system headers first: `sudo apt install libgdal-dev`.
+    * **Windows/Mac:** Using **Conda** is strongly recommended as it handles these dependencies automatically.
+    * **Linux:** You must install system headers first: `sudo apt install libgdal-dev`.
 
 
 
@@ -74,15 +74,51 @@ pip install -r requirements.txt
 
 ---
 
-## 🔑 Configuration
+## 🔑 Configuration & Environment Variables
 
-You must create a `keys.yaml` file in the **root directory** of the project to store your API key. This file is ignored by Git to keep your secrets safe.
+This project uses a `.env` file to securely manage API keys, database credentials, and system settings across both the Python application and the Docker containers.
 
-1. Create a file named `keys.yaml`.
-2. Paste the following content into it:
+**Setup Instructions:**
 
-```yaml
-entsoe-key: "YOUR-UUID-API-KEY-HERE"
+1. In the **root directory** of the project, locate the file named `.env.example`.
+2. Rename this file to exactly **`.env`** (or create a new file named `.env`).
+3. Open the `.env` file and replace the placeholder values (especially `ENTSOE_API_KEY`) with your actual credentials.
+
+```bash
+# ==============================================================================
+# DATABASE CONFIGURATION (PostgreSQL / TimescaleDB)
+# ==============================================================================
+# Internal database credentials used by the Docker container and the Python API.
+POSTGRES_USER=grid_analyst_admin
+POSTGRES_PASSWORD=replace_with_strong_password_123
+POSTGRES_DB=exchange_analysis
+
+# Connectivity settings for local development. 
+# Default Postgres is 5432; using 5433 to avoid local conflicts.
+DB_HOST=localhost
+DB_PORT=5433
+
+# ==============================================================================
+# MONITORING & VISUALIZATION (Grafana)
+# ==============================================================================
+# Web UI credentials for the Grafana monitoring dashboard.
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=replace_with_secure_admin_pass
+GRAFANA_PORT=3001
+
+# ==============================================================================
+# EXTERNAL API INTEGRATIONS
+# ==============================================================================
+# ENTSO-E Transparency Platform API Key. 
+# Obtain at: [https://transparency.entsoe.eu/](https://transparency.entsoe.eu/)
+ENTSOE_API_KEY="YOUR-UUID-API-KEY-HERE"
+
+# ==============================================================================
+# APPLICATION SETTINGS
+# ==============================================================================
+# LOG_LEVEL options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_LEVEL=INFO
+DEBUG_MODE=False
 
 ```
 
@@ -134,10 +170,11 @@ streamlit run src/app.py
 
 **Dashboard Features:**
 
-* **Methodology Comparison:** Visualises physical/commercial flows and import mixes for each bidding zone and each flow methodology for a given hour.
-* **Thermal Net Position:** Highlights the selected bidding zone and shows its net position via thermal tinting (Green for Export, Blue for Import).
-* **Generation Mix vs Demand:** Displays the internal generation mix stacked by fuel type, overlaid with a total demand line to identify import requirements.
-* **Curved Flow Mapping:** Dynamic curved arrows scaled by MW volume representing real-time exchanges.
+* **Methodology Comparison:** Visualises how standard commercial/physical flows and advanced flow tracing algorithms alter the perceived cross-border exchanges and imported fuel mixes for any given hour.
+* **Interactive Flow Mapping:** Dynamic, curved arrows scaled by MW volume represent real-time exchanges. The map is fully interactive—users can click any bidding zone to instantly update the dashboard focus.
+* **Net Position Tracking:** Highlights the selected bidding zone using thermal tinting (Green for Export, Blue for Import) and features an hourly trend bar chart to monitor intra-day market shifts.
+* **Generation Mix & Demand:** Displays internal generation stacked by fuel type—explicitly handling storage charging as negative generation below the zero-axis—overlaid with a total demand line to clearly identify import requirements.
+* **Import Fuel Decomposition:** Traces the specific fuel types (e.g., Wind, Nuclear, Lignite) imported from the broader European network, calculated dynamically based on the selected flow methodology.
 
 ---
 

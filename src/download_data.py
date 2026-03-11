@@ -12,11 +12,15 @@ and standardize raw generation, demand, and cross-border flow data.
 
 import pandas as pd
 import requests
+import logging
 from io import StringIO
 from typing import Dict, Optional, Any
 from entsoe import EntsoePandasClient
 from config import PipelineConfig
-from utils import io, safe_query, fill_gaps_wrapper, correct_zero_values
+from utils import DataIO, safe_query, fill_gaps_wrapper, correct_zero_values
+
+# Initialize logger
+logger = logging.getLogger(__name__)
 
 TIMEOUT = 60
 GB_GENERATION_TYPES = [
@@ -28,12 +32,12 @@ GB_GENERATION_TYPES = [
 # ==========================================
 # GENERATION & DEMAND
 # ==========================================
-def download_generation_demand(client: EntsoePandasClient, config: PipelineConfig) -> None:
+def download_generation_demand(client: EntsoePandasClient, config: PipelineConfig, io: DataIO) -> None:
     if not config.data_types["generation"]: return
     raw_dir = config.get_output_path("generation_demand_data_bidding_zones") / "raw"
     
     for bz in config.target_zones:
-        print(f"[Download] Gen/Demand for {bz}...")
+        logger.info(f"[Download] Gen/Demand for {bz}...")
         gen_df: Optional[pd.DataFrame] = None
         load_df: Optional[pd.DataFrame] = None
 
@@ -41,7 +45,8 @@ def download_generation_demand(client: EntsoePandasClient, config: PipelineConfi
             try:
                 gen_df = download_GB_per_type_data(config.start, config.end)
                 load_df = download_GB_demand_data(config.start, config.end)
-            except Exception as e: print(f"[Error] Failed to download GB data: {e}")
+            except Exception as e: 
+                logger.error(f"[Error] Failed to download GB data: {e}", exc_info=config.debug_mode)
         else:
             gen_df = safe_query(client.query_generation, context=f"Generation {bz}", country_code=bz, start=config.start, end=config.end, nett=True)
             load_df = safe_query(client.query_load, context=f"Load {bz}", country_code=bz, start=config.start, end=config.end)
@@ -50,7 +55,7 @@ def download_generation_demand(client: EntsoePandasClient, config: PipelineConfi
         io.save(gen_df, raw_dir / f"{bz}_raw_generation.csv", "raw_generation", config, bz=bz)
         io.save(load_df, raw_dir / f"{bz}_raw_load.csv", "raw_load", config, bz=bz)
 
-def process_generation_demand(config: PipelineConfig) -> Dict[str, pd.DataFrame]:
+def process_generation_demand(config: PipelineConfig, io: DataIO) -> Dict[str, pd.DataFrame]:
     raw_dir = config.get_output_path("generation_demand_data_bidding_zones") / "raw"
     out_dir = config.get_output_path("generation_demand_data_bidding_zones")
     gaps_dir = config.get_gaps_path("generation_demand_data_bidding_zones")
@@ -67,7 +72,7 @@ def process_generation_demand(config: PipelineConfig) -> Dict[str, pd.DataFrame]
 
         if gen_df is not None:
             gen_df = gen_df.loc[:, ~gen_df.columns.duplicated()].apply(pd.to_numeric, errors='coerce').resample("1h").mean()
-            gen_df = fill_gaps_wrapper(gen_df, gaps_dir, f"{bz}_gen")
+            gen_df = fill_gaps_wrapper(gen_df, gaps_dir, f"{bz}_gen", config=config, io=io, bz=bz)
             storage_cols = [c for c in ["Hydro Pumped Storage", "Energy storage"] if c in gen_df.columns]
             
             if storage_cols:
@@ -82,7 +87,7 @@ def process_generation_demand(config: PipelineConfig) -> Dict[str, pd.DataFrame]
 
         if load_df is not None:
             load_df = load_df.apply(pd.to_numeric, errors='coerce').resample("1h").mean()
-            load_df = fill_gaps_wrapper(load_df, gaps_dir, f"{bz}_load")
+            load_df = fill_gaps_wrapper(load_df, gaps_dir, f"{bz}_load", config=config, io=io, bz=bz)
 
         if gen_df is not None:
             if load_df is not None:
@@ -103,7 +108,7 @@ def process_generation_demand(config: PipelineConfig) -> Dict[str, pd.DataFrame]
 # ==========================================
 # FLOWS
 # ==========================================
-def download_flows(client: EntsoePandasClient, config: PipelineConfig, flow_type: str = "commercial", dayahead: bool = False) -> None:
+def download_flows(client: EntsoePandasClient, config: PipelineConfig, io: DataIO, flow_type: str = "commercial", dayahead: bool = False) -> None:
     if flow_type == "commercial" and not config.data_types.get(f"flows_commercial{'_dayahead' if dayahead else '_total'}"): return
     if flow_type == "physical" and not config.data_types.get("flows_physical"): return
 
@@ -111,16 +116,16 @@ def download_flows(client: EntsoePandasClient, config: PipelineConfig, flow_type
     raw_dir = config.get_output_path(folder) / "raw"
 
     for bz in config.target_zones:
-        print(f"[Download] {flow_type} flows for {bz} (Dayahead={dayahead})...")
+        logger.info(f"[Download] {flow_type} flows for {bz} (Dayahead={dayahead})...")
 
         flow_df: Optional[pd.DataFrame] = None
         for n in [z for z in config.neighbours_map[bz] if z in config.zones]:
             if flow_type == "commercial":
-                f_out = safe_query(client.query_scheduled_exchanges, context=f"Out {bz}", country_code_from=bz, country_code_to=n, start=config.start, end=config.end, dayahead=dayahead)
-                f_in = safe_query(client.query_scheduled_exchanges, context=f"In {bz}", country_code_from=n, country_code_to=bz, start=config.start, end=config.end, dayahead=dayahead)
+                f_out = safe_query(client.query_scheduled_exchanges, context=f"{bz}->{n}", country_code_from=bz, country_code_to=n, start=config.start, end=config.end, dayahead=dayahead)
+                f_in = safe_query(client.query_scheduled_exchanges, context=f"{n}->{bz}", country_code_from=n, country_code_to=bz, start=config.start, end=config.end, dayahead=dayahead)
             else:
-                f_out = safe_query(client.query_crossborder_flows, context=f"Out {bz}", country_code_from=bz, country_code_to=n, start=config.start, end=config.end)
-                f_in = safe_query(client.query_crossborder_flows, context=f"In {bz}", country_code_from=n, country_code_to=bz, start=config.start, end=config.end)
+                f_out = safe_query(client.query_crossborder_flows, context=f"{bz}->{n}", country_code_from=bz, country_code_to=n, start=config.start, end=config.end)
+                f_in = safe_query(client.query_crossborder_flows, context=f"{n}->{bz}", country_code_from=n, country_code_to=bz, start=config.start, end=config.end)
 
             if f_out is not None: flow_df = pd.concat([flow_df, f_out.loc[~f_out.index.duplicated()].to_frame(name=f"{bz}_{n}")], axis=1)
             if f_in is not None: flow_df = pd.concat([flow_df, f_in.loc[~f_in.index.duplicated()].to_frame(name=f"{n}_{bz}")], axis=1)
@@ -129,7 +134,7 @@ def download_flows(client: EntsoePandasClient, config: PipelineConfig, flow_type
             table_name = f"raw_{flow_type}_flows" + ("_da" if dayahead else "")
             io.save(flow_df.loc[~flow_df.index.duplicated()], raw_dir / f"{bz}_raw_flows.csv", table_name, config, bz=bz)
 
-def process_flows(config: PipelineConfig, flow_type: str = "commercial", dayahead: bool = False) -> Dict[str, pd.DataFrame]:
+def process_flows(config: PipelineConfig, io: DataIO, flow_type: str = "commercial", dayahead: bool = False) -> Dict[str, pd.DataFrame]:
     folder = "physical_flow_data_bidding_zones" if flow_type == "physical" else f"comm_flow_{'dayahead' if dayahead else 'total'}_bidding_zones"
     raw_dir, out_dir, gaps_dir = config.get_output_path(folder) / "raw", config.get_output_path(folder), config.get_gaps_path(folder)
     flow_dict: Dict[str, pd.DataFrame] = {}
@@ -139,9 +144,9 @@ def process_flows(config: PipelineConfig, flow_type: str = "commercial", dayahea
         df: Optional[pd.DataFrame] = io.load(raw_dir / f"{bz}_raw_flows.csv", table_name, config, bz=bz)
         if df is None: continue
 
-        df = fill_gaps_wrapper(df.resample("1h").mean(), gaps_dir, f"{bz}_flows", config=config, bz=bz, flow_type=flow_type, dayahead=dayahead)
+        df = fill_gaps_wrapper(df.resample("1h").mean(), gaps_dir, f"{bz}_flows", config=config, io=io, bz=bz, flow_type=flow_type, dayahead=dayahead)
         
-        print(f"[Process] {flow_type} flows for {bz}...")
+        logger.info(f"[Process] {flow_type} flows for {bz}...")
 
         net_df = pd.DataFrame(index=df.index)
         for n in [z for z in config.neighbours_map[bz] if z in config.zones]:
@@ -158,8 +163,8 @@ def process_flows(config: PipelineConfig, flow_type: str = "commercial", dayahea
 
     return flow_dict
 
-def balance_flows_symmetry(data_dict: Dict[str, pd.DataFrame], config: PipelineConfig, flow_type: str = "commercial", dayahead: bool = False) -> Dict[str, pd.DataFrame]:
-    print(f"[Balance] Ensuring symmetry for {flow_type} flows...")
+def balance_flows_symmetry(data_dict: Dict[str, pd.DataFrame], config: PipelineConfig, io: DataIO, flow_type: str = "commercial", dayahead: bool = False) -> Dict[str, pd.DataFrame]:
+    logger.info(f"[Balance] Ensuring symmetry for {flow_type} flows...")
     folder = "physical_flow_data_bidding_zones" if flow_type == "physical" else f"comm_flow_{'dayahead' if dayahead else 'total'}_bidding_zones"
     gaps_dir, out_dir = config.get_gaps_path(folder), config.get_output_path(folder)
 
@@ -211,7 +216,7 @@ def download_GB_per_type_data(start: pd.Timestamp, end: pd.Timestamp) -> Optiona
             df_new = _download_GB_per_type_data(date)
             if df_new is not None: df_list.append(df_new)
         except Exception as e:
-            print(f"Warning: Failed to fetch GB Gen for {date.date()}: {e}")
+            logger.warning(f"Failed to fetch GB Gen for {date.date()}: {e}")
     return pd.concat(df_list).loc[start:end] if df_list else None
 
 def download_GB_demand_data(start: pd.Timestamp, end: pd.Timestamp) -> Optional[pd.DataFrame]:
@@ -223,7 +228,7 @@ def download_GB_demand_data(start: pd.Timestamp, end: pd.Timestamp) -> Optional[
             df_new = _download_GB_demand_data(date)
             if df_new is not None: df_list.append(df_new)
         except Exception as e:
-            print(f"Warning: Failed to fetch GB Demand for {date.date()}: {e}")
+            logger.warning(f"Failed to fetch GB Demand for {date.date()}: {e}")
     return pd.concat(df_list).loc[start:end] if df_list else None
 
 def _download_GB_per_type_data(date: pd.Timestamp) -> Optional[pd.DataFrame]:
@@ -265,7 +270,7 @@ def _download_GB_demand_data(date: pd.Timestamp) -> Optional[pd.DataFrame]:
         df.loc[data.index, "Actual Load"] = data["Quantity"].values
     return df
 
-def fetch_simple_metrics(client: EntsoePandasClient, config: PipelineConfig) -> None:
+def fetch_simple_metrics(client: EntsoePandasClient, config: PipelineConfig, io: DataIO) -> None:
     """Fetches Prices and Net Positions for Target Zones."""
     if not config.data_types["metrics"]: return
     
@@ -276,7 +281,7 @@ def fetch_simple_metrics(client: EntsoePandasClient, config: PipelineConfig) -> 
         out_dir = config.get_output_path(name)
         
         for bz in config.target_zones:
-            print(f"Fetching {name} for {bz}...")
+            logger.info(f"[Download] Fetching {name} for {bz}...")
             df: Optional[pd.DataFrame] = safe_query(method, context=f"{name} {bz}", country_code=bz, start=config.start, end=config.end, **kwargs)
             
             if df is not None:
@@ -288,7 +293,8 @@ def fetch_simple_metrics(client: EntsoePandasClient, config: PipelineConfig) -> 
                 if name == "net_positions_dayahead" and bz.startswith("IT"):
                     mask_2025 = df.index.year == 2025
                     if mask_2025.any():
-                        print(f"  -> Adjusting sign convention for {bz} 2025 Net Positions.")
+                        logger.info(f"  -> Adjusting sign convention for {bz} 2025 Net Positions.")
                         df.loc[mask_2025] = df.loc[mask_2025] * -1
                 
+                # Note: Currently saving to CSV direct, but could be passed to io.save
                 df.resample("1h").mean().to_csv(out_dir / f"{bz}_{name}.csv")
