@@ -22,14 +22,19 @@ from sqlalchemy import create_engine
 
 load_dotenv()
 
+# Initialize logger
+logger = logging.getLogger(__name__)
+
 # --- API CREDENTIALS ---
 ENTSOE_API_KEY = os.getenv("ENTSOE_API_KEY")
 
 # Official Validation Logic
 if not ENTSOE_API_KEY:
-    raise EnvironmentError(
-        "CRITICAL: ENTSOE_API_KEY not found in .env file. "
-        "Please visit https://transparency.entsoe.eu/ to obtain a key."
+    logger.warning(
+        "ENTSOE_API_KEY not found in .env file. "
+        "The pipeline will continue using local database/CSV records, "
+        "but live data downloading will be disabled. "
+        "Visit https://transparency.entsoe.eu/ to obtain a key."
     )
 
 # --- DATABASE SETTINGS ---
@@ -42,9 +47,6 @@ DB_PORT = os.getenv("DB_PORT", "5433")
 # --- LOGGING & DEBUG ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "False").lower() == "true"
-
-# Initialize logger
-logger = logging.getLogger(__name__)
 
 def get_db_engine():
     """Constructs the SQLAlchemy engine."""
