@@ -19,7 +19,6 @@ from typing import Dict, Optional, Tuple, List, Any
 from config import PipelineConfig
 from utils import DataIO
 
-# Initialize logger
 logger = logging.getLogger(__name__)
 
 # ==========================================
@@ -32,16 +31,25 @@ def _load_if_missing(
     comm_dfs: Optional[Dict[str, pd.DataFrame]] = None, 
     phys_dfs: Optional[Dict[str, pd.DataFrame]] = None
 ) -> Tuple[Dict[str, pd.DataFrame], Dict[str, pd.DataFrame], Dict[str, pd.DataFrame]]:
-    """Helper function to lazy-load datasets if not already present in memory."""
+    """
+    Lazy-loads generation, commercial, and physical datasets into memory.
+    Synchronizes data vintages and enforces standard temporal resampling.
+    """
     if gen_dfs is None:
         logger.info("Loading Gen data...")
         gen_dir = config.get_output_path("generation_demand_data_bidding_zones")
         gen_dfs = {}
         for bz in config.zones:
             df = io.load(gen_dir / f"{bz}_generation_demand_data_bidding_zones.csv", "processed_generation", config, bz=bz)
-            if df is not None: gen_dfs[bz] = df.fillna(0)
+            if df is not None:
+                # Extract and synchronize global data vintage
+                if "source_download_date" in df.columns and not hasattr(config, "analysis_source_date"):
+                    config.analysis_source_date = str(df["source_download_date"].iloc[0]).split()[0]
+                # Isolate numeric features during temporal resampling
+                gen_dfs[bz] = df.resample("1h").mean(numeric_only=True).fillna(0)
+    else:
+        logger.info("Gen data already loaded...")
     
-    # Ensure gen_dfs is returned as a dict even if it was passed in as None and failed to load
     if gen_dfs is None: gen_dfs = {}
 
     if comm_dfs is None:
@@ -49,8 +57,13 @@ def _load_if_missing(
         comm_dir = config.get_output_path("comm_flow_total_bidding_zones")
         comm_dfs = {}
         for bz in config.zones:
-            df = io.load(comm_dir / f"{bz}_comm_flow_total_bidding_zones.csv", "balanced_commercial_flows", config, bz=bz)
-            if df is not None: comm_dfs[bz] = df.fillna(0)
+            df = io.load(comm_dir / f"{bz}_comm_flow_total_bidding_zones.csv", "processed_commercial_flows", config, bz=bz)
+            if df is not None:
+                if "source_download_date" in df.columns and not hasattr(config, "analysis_source_date"):
+                    config.analysis_source_date = str(df["source_download_date"].iloc[0]).split()[0]
+                comm_dfs[bz] = df.resample("1h").mean(numeric_only=True).fillna(0)
+    else:
+        logger.info("Commercial Flow data already loaded...")
             
     if comm_dfs is None: comm_dfs = {}
 
@@ -59,9 +72,14 @@ def _load_if_missing(
         flow_dir = config.get_output_path("physical_flow_data_bidding_zones")
         phys_dfs = {}
         for bz in config.zones:
-            df = io.load(flow_dir / f"{bz}_physical_flow_data_bidding_zones.csv", "balanced_physical_flows", config, bz=bz)
-            if df is not None: phys_dfs[bz] = df.fillna(0)
-            
+            df = io.load(flow_dir / f"{bz}_physical_flow_data_bidding_zones.csv", "processed_physical_flows", config, bz=bz)
+            if df is not None:
+                if "source_download_date" in df.columns and not hasattr(config, "analysis_source_date"):
+                    config.analysis_source_date = str(df["source_download_date"].iloc[0]).split()[0]
+                phys_dfs[bz] = df.resample("1h").mean(numeric_only=True).fillna(0)
+    else:
+        logger.info("Physical Flow data already loaded...")
+
     if phys_dfs is None: phys_dfs = {}
     
     return gen_dfs, comm_dfs, phys_dfs
@@ -77,7 +95,7 @@ def perform_decomposition_analysis(
 ) -> None:
     """
     Decomposes incoming commercial flows by matching them against the generation 
-    mix (fractions) of the respective source bidding zones.
+    mix fractions of the respective source bidding zones.
     """
     logger.info("=== STARTING COMMERCIAL FLOW DECOMPOSITION ===")
     gen_dfs_loaded, comm_dfs_loaded, _ = _load_if_missing(config, io, gen_dfs, comm_dfs=comm_dfs)
@@ -92,7 +110,7 @@ def perform_decomposition_analysis(
     for bz, df in comm_dfs_loaded.items():
         for col in [col for col in df.columns if "net_export" in col and "Net Export" != col]:
             target_col = col.replace("_net_export", "_netted_import")
-            # Calculate netted imports (clipping exports to 0 and taking absolute value)
+            # Derive netted imports by isolating negative net exports
             if target_col not in df.columns: df[target_col] = df[col].clip(upper=0).abs()
                 
     logger.info("[Decomposition] Saving raw flow totals (per_bidding_zone)...")
@@ -109,7 +127,7 @@ def perform_decomposition_analysis(
     logger.info("[Decomposition] Calculating generation mix fractions...")
     gen_fractions: Dict[str, pd.DataFrame] = {}
     for bz, df in gen_dfs_loaded.items():
-        total = df["Total Generation"].replace(0, 1) # Prevent DivisionByZero
+        total = df["Total Generation"].replace(0, 1)
         fracs = df[[c for c in df.columns if c in config.gen_types_list]].div(total, axis=0)
         if "Storage Discharge" in df.columns: fracs["Storage"] = df["Storage Discharge"] / total
         gen_fractions[bz] = fracs
@@ -125,7 +143,7 @@ def perform_decomposition_analysis(
         for n in config.zones:
             if f"{n}_{bz}" in comm_dfs_loaded[bz].columns:
                 if n in gen_fractions:
-                    # Multiply incoming flow by the source zone's generation mix
+                    # Apply source generation fractions to bilateral flow volumes
                     t_df = gen_fractions[n].mul(comm_dfs_loaded[bz][f"{n}_{bz}"], axis=0)
                     t_df.columns = pd.Index([f"{n}_{c}" for c in t_df.columns])
                     total_imp_list.append(t_df)
@@ -144,7 +162,7 @@ def perform_decomposition_analysis(
             io.save(total_full, dirs["per_type_per_bidding_zone"] / f"{bz}_import_comm_flow_total_per_type_per_bidding_zone.csv", "analysis_cft_total_type_bz", config, bz=bz)
             io.save(netted_full, dirs["netted_per_type_per_bidding_zone"] / f"{bz}_import_comm_flow_total_netted_per_type_per_bidding_zone.csv", "analysis_cft_netted_type_bz", config, bz=bz)
             
-            # Aggregate by technology type
+            # Aggregate by specific technology type
             per_type = pd.DataFrame(index=config.time_index)
             per_type_net = pd.DataFrame(index=config.time_index)
             for tech in config.gen_types_list:
@@ -155,7 +173,7 @@ def perform_decomposition_analysis(
             io.save(per_type, dirs["per_type"] / f"{bz}_import_comm_flow_total_per_type.csv", "analysis_cft_total_type", config, bz=bz)
             io.save(per_type_net, dirs["netted_per_type"] / f"{bz}_import_comm_flow_total_netted_per_type.csv", "analysis_cft_netted_type", config, bz=bz)
             
-            # Aggregate by broader categories (e.g. Fossil, Renewable)
+            # Aggregate by broader categorical mappings (e.g., Fossil, Renewable)
             per_agg = pd.DataFrame(index=config.time_index)
             per_agg_net = pd.DataFrame(index=config.time_index)
             for cat, techs in agg_map.items():
@@ -178,7 +196,7 @@ def _decompose_and_save(
     label: str, 
     gen_dfs: Dict[str, pd.DataFrame]
 ) -> None:
-    """Shares logic to format, decompose, and save the raw matrix outputs."""
+    """Provides unified logic to format, decompose, and persist structural tracing matrices."""
     logger.info(f"[{label.upper()}] Saving and Decomposing Traced Flows...")
     logger.info(f"   -> Output Directory: {base_dir}")
     per_bz_dir = base_dir / "per_bidding_zone"
@@ -204,7 +222,7 @@ def _decompose_and_save(
         
         count += 1
         if count % 5 == 0 or count == total_zones:
-            logger.info(f"      Saving results for {bz}...")
+            logger.info(f"      [{count}/{total_zones}] Saving results for {bz}...")
             
         io.save(traced_dfs[bz], per_bz_dir / f"{bz}_import_flow_tracing_{label}_per_bidding_zone.csv", f"tracing_{label}_bz", config, bz=bz)
         
@@ -249,8 +267,8 @@ def perform_aggregated_flow_tracing(
     logger.info("Starting Aggregated Coupling Flow Tracing...")
     gen_dfs_loaded, _, phys_flow_dfs_loaded = _load_if_missing(config, io, gen_dfs, phys_dfs=phys_flow_dfs)
     for bz in config.zones:
-        if bz in gen_dfs_loaded: gen_dfs_loaded[bz] = gen_dfs_loaded[bz].resample("1h").mean().fillna(0)
-        if bz in phys_flow_dfs_loaded: phys_flow_dfs_loaded[bz] = phys_flow_dfs_loaded[bz].resample("1h").mean().fillna(0)
+        if bz in gen_dfs_loaded: gen_dfs_loaded[bz] = gen_dfs_loaded[bz].resample("1h").mean(numeric_only=True).fillna(0)
+        if bz in phys_flow_dfs_loaded: phys_flow_dfs_loaded[bz] = phys_flow_dfs_loaded[bz].resample("1h").mean(numeric_only=True).fillna(0)
 
     agg_tracing = {bz: pd.DataFrame(0.0, index=config.time_index, columns=config.zones, dtype=float) for bz in config.zones}
     agg_dir = config.output_dir / "import_flow_tracing_bidding_zones/agg_coupling" / str(config.year)
@@ -262,7 +280,7 @@ def perform_aggregated_flow_tracing(
         A: List[List[float]] = []
         net_imps: List[float] = []
         
-        # Build the characteristic matrix (A) and nodal input vector (Pin) for the current hour
+        # Construct the characteristic matrix (A) and nodal input vector (Pin)
         for bz in config.zones:
             Pin_arr: List[float] = [0.0] * len(config.zones)
             A_arr: List[float] = [0.0] * len(config.zones)
@@ -283,21 +301,44 @@ def perform_aggregated_flow_tracing(
             Pin.append(Pin_arr)
             A.append(A_arr)
         
-        # Perform Flow Tracing inversion
+        # Evaluate diagonal elements for singularities and apply mathematical smoothing if required
+        for idx, bz_name in enumerate(config.zones):
+            if A[idx][idx] == 0:
+                # Capture state diagnostics prior to applying inversion patch
+                bz_net = phys_flow_dfs_loaded[bz_name].at[t, "Net Export"]
+                borders = {
+                    f"{bz_name}->{n}": phys_flow_dfs_loaded[bz_name].at[t, f"{bz_name}_{n}_net_export"] 
+                    for n in config.neighbours_map[bz_name] 
+                    if f"{bz_name}_{n}_net_export" in phys_flow_dfs_loaded[bz_name].columns
+                }
+                
+                logger.warning(
+                    f"[Singularity Prevented] Time: {t} | {bz_name} diagonal is 0.0. "
+                    f"Net Export: {bz_net:.2f} | Borders: {borders}. "
+                    f"Applying 1.0 patch to permit inversion."
+                )
+                
+                # Enforce non-zero diagonal to permit matrix inversion
+                A[idx][idx] = 1.0
+        
+        # Execute topology inversion
         try:
             q = np.dot(np.linalg.inv(A), Pin)
             for x in range(len(config.zones)):
                 imps = net_imps[x] * q[x]
                 for i in range(len(imps)):
-                    if imps[i] > 0 and x != i: agg_tracing[config.zones[x]].at[t, config.zones[i]] = imps[i]
-        except: 
-            # Catch Singular Matrices (e.g. disconnected grid islands or missing data)
+                    if imps[i] > 0 and x != i: 
+                        agg_tracing[config.zones[x]].at[t, config.zones[i]] = imps[i]
+                        
+        except np.linalg.LinAlgError: 
+            # Log intractable matrices resulting from perfectly symmetrical loops or grid isolation
             sing_times.append(t)
-            logger.warning(f"Singular Matrix at time: {t}")
+            logger.error(f"FATAL Singular Matrix at time: {t} despite diagonal patches.")
+            
             for x in config.zones:
                 agg_tracing[x].loc[t] = np.nan
             
-    # Save singular times to a flat CSV log only if anomalies occurred
+    # Persist unresolvable timepoints for subsequent imputation
     log_path = agg_dir / "incalculable_timepoints/incalculable_timepoints.csv"
     if sing_times:
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -315,13 +356,13 @@ def perform_direct_flow_tracing(
 ) -> None:
     """
     Constructs and inverts the grid topology matrix for Direct Coupling Flow Tracing.
-    Uses absolute internal generation and demand as nodal properties.
+    Uses absolute internal generation and demand as the primary nodal properties.
     """
     logger.info("Starting Direct Coupling Flow Tracing...")
     gen_dfs_loaded, _, phys_flow_dfs_loaded = _load_if_missing(config, io, gen_dfs, phys_dfs=phys_flow_dfs)
     for bz in config.zones:
-        if bz in gen_dfs_loaded: gen_dfs_loaded[bz] = gen_dfs_loaded[bz].resample("1h").mean().fillna(0)
-        if bz in phys_flow_dfs_loaded: phys_flow_dfs_loaded[bz] = phys_flow_dfs_loaded[bz].resample("1h").mean().fillna(0)
+        if bz in gen_dfs_loaded: gen_dfs_loaded[bz] = gen_dfs_loaded[bz].resample("1h").mean(numeric_only=True).fillna(0)
+        if bz in phys_flow_dfs_loaded: phys_flow_dfs_loaded[bz] = phys_flow_dfs_loaded[bz].resample("1h").mean(numeric_only=True).fillna(0)
 
     dir_tracing = {bz: pd.DataFrame(0.0, index=config.time_index, columns=config.zones, dtype=float) for bz in config.zones}
     direct_dir = config.output_dir / "import_flow_tracing_bidding_zones/direct_coupling" / str(config.year)
@@ -333,22 +374,20 @@ def perform_direct_flow_tracing(
         A: List[List[float]] = []
         demands: List[float] = []
         
-        # Build the characteristic matrix (A) and nodal input vector (Gin) for the current hour
+        # Construct the characteristic matrix (A) and absolute nodal input vector (Gin)
         for bz in config.zones:
             Gin_arr: List[float] = [0.0] * len(config.zones)
             A_arr: List[float] = [0.0] * len(config.zones)
             exports: float = 0.0
             
-            # Use .get() or check if the index exists to prevent a crash on missing hours
+            # Extract absolute generation and load, defaulting to 0.0 for missing temporal indices
             if t in gen_dfs_loaded[bz].index:
                 gen_val = float(gen_dfs_loaded[bz].at[t, "Total Generation"])
                 load_val = float(gen_dfs_loaded[bz].at[t, "Total Load"])
             else:
-                # If the hour is missing, we assume 0 or use the previous hour's value
                 gen_val = 0.0
                 load_val = 0.0
-                # Optional: Log a warning so you know which data is missing
-                logger.warning(f"Warning: Missing generation data for {bz} at {t}")
+                logger.warning(f"Warning: Missing generation array for {bz} at {t}")
 
             net_exp = float(phys_flow_dfs_loaded[bz].at[t, "Net Export"])
             
@@ -373,21 +412,44 @@ def perform_direct_flow_tracing(
             Gin.append(Gin_arr)
             A.append(A_arr)
             
-        # Perform Flow Tracing inversion
+        # Evaluate diagonal elements for singularities and apply mathematical smoothing if required
+        for idx, bz_name in enumerate(config.zones):
+            if A[idx][idx] == 0:
+                # Capture state diagnostics prior to applying inversion patch
+                bz_net = phys_flow_dfs_loaded[bz_name].at[t, "Net Export"]
+                borders = {
+                    f"{bz_name}->{n}": phys_flow_dfs_loaded[bz_name].at[t, f"{bz_name}_{n}_net_export"] 
+                    for n in config.neighbours_map[bz_name] 
+                    if f"{bz_name}_{n}_net_export" in phys_flow_dfs_loaded[bz_name].columns
+                }
+                
+                logger.warning(
+                    f"[Singularity Prevented] Time: {t} | {bz_name} diagonal is 0.0. "
+                    f"Net Export: {bz_net:.2f} | Borders: {borders}. "
+                    f"Applying 1.0 patch to permit inversion."
+                )
+                
+                # Enforce non-zero diagonal to permit matrix inversion
+                A[idx][idx] = 1.0
+        
+        # Execute topology inversion
         try:
             q = np.dot(np.linalg.inv(A), Gin)
             for x in range(len(config.zones)):
                 imps = demands[x] * q[x]
                 for i in range(len(imps)):
-                    if imps[i] > 0 and x != i: dir_tracing[config.zones[x]].at[t, config.zones[i]] = imps[i]
-        except: 
-            # Catch Singular Matrices (e.g. disconnected grid islands or missing data)
+                    if imps[i] > 0 and x != i: 
+                        dir_tracing[config.zones[x]].at[t, config.zones[i]] = imps[i]
+                        
+        except np.linalg.LinAlgError: 
+            # Log intractable matrices resulting from perfectly symmetrical loops or grid isolation
             sing_times.append(t)
-            logger.warning(f"Singular Matrix at time: {t}")
+            logger.error(f"FATAL Singular Matrix at time: {t} despite diagonal patches.")
+            
             for x in config.zones:
                 dir_tracing[x].loc[t] = np.nan
     
-    # Save singular times to a flat CSV log only if anomalies occurred
+    # Persist unresolvable timepoints for subsequent imputation
     log_path = direct_dir / "incalculable_timepoints/incalculable_timepoints.csv"
     if sing_times:
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -408,8 +470,8 @@ def perform_pooling_analysis(
     phys_flow_dfs: Optional[Dict[str, pd.DataFrame]] = None
 ) -> None:
     """
-    Implements a 'Copper Plate' pooling analysis where net imports are proportionally 
-    sourced from all net exporters in the network, disregarding exact grid topology.
+    Executes a 'Copper Plate' pooling analysis where net imports are proportionally 
+    sourced from all net exporters in the network, independent of exact grid topology.
     """
     logger.info("=== STARTING POOLING ANALYSIS ===")
     gen_dfs_loaded, comm_dfs_loaded, phys_flow_dfs_loaded = _load_if_missing(config, io, gen_dfs, comm_dfs, phys_flow_dfs)
@@ -462,7 +524,7 @@ def perform_pooling_analysis(
                     if valid: per_agg[cat] = per_type[valid].sum(axis=1)
                 io.save(per_agg, dirs["per_agg_type"] / f"{bz}_pooled_{file_p}_per_agg_type.csv", f"pool_{name}_agg", config, bz=bz)
 
-    # Establish system-wide export/import matrices to calculate proportional shares
+    # Construct system-wide export/import matrices for proportional allocation
     tot_exp = pd.DataFrame(index=config.time_index)
     tot_imp = pd.DataFrame(index=config.time_index)
     net_exp = pd.DataFrame(index=config.time_index)
@@ -496,7 +558,7 @@ def perform_pooling_analysis(
 # ==========================================
 def perform_post_processing_aggregation(config: PipelineConfig, io: DataIO) -> None:
     """
-    Aggregates high-granularity hourly MW flows into final annual TWh totals
+    Aggregates high-granularity hourly MW flows into final annualized TWh totals
     for high-level methodology comparison.
     """
     logger.info("Starting Post-Processing Aggregation...")
@@ -520,7 +582,7 @@ def perform_post_processing_aggregation(config: PipelineConfig, io: DataIO) -> N
         if drop and drop in df.columns: df = df.drop(columns=[drop])
         return df
 
-    # Safely load the singular times log directly from CSV, if it exists
+    # Ingest log of mathematically singular timepoints for fallback allocation
     missing_times: pd.DatetimeIndex = pd.DatetimeIndex([])
     missing_log_path = base_out / f"import_flow_tracing_bidding_zones/agg_coupling/{year}/incalculable_timepoints/incalculable_timepoints.csv"
     if missing_log_path.exists():
@@ -536,7 +598,7 @@ def perform_post_processing_aggregation(config: PipelineConfig, io: DataIO) -> N
     for bz in config.zones:
         df = load_clean(io, gen_dir / f"{bz}_generation_demand_data_bidding_zones.csv", "processed_generation", bz)
         if df is not None:
-            df = df.resample("1h").mean().fillna(0)
+            df = df.resample("1h").mean(numeric_only=True).fillna(0)
             total = df["Total Generation"].replace(0, 1)
             fracs = df[[c for c in df.columns if c in config.gen_types_list]].div(total, axis=0)
             if "Storage Discharge" in df.columns: fracs["Storage"] = df["Storage Discharge"] / total
@@ -590,7 +652,7 @@ def perform_post_processing_aggregation(config: PipelineConfig, io: DataIO) -> N
                 decomp = gen_fractions[bz].mul(h_exp, axis=0)
                 res_exp_type.loc[m, decomp.columns] = decomp.sum()
 
-        # Safely convert aggregated MW hourly values into Terawatt-hours (TWh)
+        # Convert high-granularity MW arrays into annualized Terawatt-hours (TWh)
         res_imp_bz = res_imp_bz.apply(pd.to_numeric, errors='coerce').fillna(0.0) / 1e6
         res_exp_bz = res_exp_bz.apply(pd.to_numeric, errors='coerce').fillna(0.0) / 1e6
         res_imp_type = res_imp_type.apply(pd.to_numeric, errors='coerce').fillna(0.0) / 1e6

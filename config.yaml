@@ -44,7 +44,7 @@ neighbours:
   PT: [ES]
   GR: [AL, BG, IT_BRNN, IT_GR, MK, TR, IT_SUD]
   NO_3: [NO_1, NO_4, NO_5, SE_2]
-  IT: [AT, FR, GR, ME, SI, CH] # Removed MT as it's usually an anomaly
+  IT: [AT, FR, GR, ME, SI, CH]
   IT_BRNN: [GR, IT_SUD]
   IT_SUD: [IT_BRNN, IT_CSUD, IT_FOGN, IT_ROSN, IT_CALA, GR]
   IT_FOGN: [IT_SUD]
@@ -56,3 +56,49 @@ neighbours:
   IT_CALA: [IT_SICI, IT_SUD]
   MT: [IT_SICI]
   HR: [BA, HU, RS, SI]
+
+# ==========================================
+# TOPOLOGY CONSTRAINTS & CLASSIFICATIONS
+# ==========================================
+# Subsea or High-Voltage Direct Current (HVDC) links
+hvdc_borders:
+  - BE_GB
+  - DK_1_GB
+  - FR_GB
+  - GB_NL
+  - GB_NO_2
+  - GB_IE_SEM
+  - GB_IE
+  - GB_NIE
+  - DE_AT_LU_SE_4
+  - DE_LU_SE_4
+  - DK_2_SE_4
+  - LT_SE_4
+  - DE_AT_LU_DK_2
+  - DE_LU_DK_2
+  - DK_1_NO_2
+  - DK_1_NL
+  - NL_NO_2
+  - DE_LU_NO_2
+  - EE_FI
+  - IT_CSUD_ME
+  - GR_IT_SUD
+  - GR_IT_BRNN
+  - IT_CSUD_IT_SARD
+  - IT_CNOR_IT_SARD
+
+# Zones permitted to maintain physically valid 0.0 MW cross-border states
+valid_zero_zones:
+  - IT_SARD
+
+# Zones excluded from active matrix modeling (e.g., historical or structural anomalies)
+zones_to_remove:
+  - DE_AT_LU
+  - IE_SEM
+  - IE
+  - NIE
+  - MT
+  - IT
+  - IT_BRNN
+  - IT_ROSN
+  - IT_FOGN
