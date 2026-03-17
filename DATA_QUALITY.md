@@ -14,7 +14,7 @@
 ### 2. System Zero Corrections (Catastrophic Drops)
 | Category | Method Tag | Description / Logic |
 | :--- | :--- | :--- |
-| **Gen/Load Zero** | `GEN_ZERO_*` | Systemic 0 MW total generation detected. Patched via tiered logic (`LINEAR`, `WEEK_BEFORE`, or `LONG_GAP_GLOBAL_MEAN`). |
+| **Gen Zero** | `GEN_ZERO_*` | Systemic 0 MW total generation detected. Patched via tiered logic (`LINEAR`, `WEEK_BEFORE`, or `LONG_GAP_GLOBAL_MEAN`). |
 | **Load Zero** | `LOAD_ZERO_*` | Systemic 0 MW total load detected. Patched via tiered logic. |
 | **Flow System Zero**| `PHYS_FLOW_SYSTEM_ZERO_*` | Total API failure where all physical borders report 0 MW. Patched via tiered logic. |
 | **Flow AC Zero** | `PHYS_BILATERAL_ZERO_[X]`| Bilateral failure where both directions of an AC line to country [X] report exactly 0 MW. Patched via tiered logic. |
