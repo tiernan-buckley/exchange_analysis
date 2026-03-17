@@ -7,7 +7,7 @@ Source: https://github.com/INATECH-CIG/exchange_analysis
 
 Description:
 Central Configuration Class for the Exchange Analysis Pipeline.
-Manages temporal boundaries, execution flags, I/O routing, and spatial (zonal) constraints.
+Manages temporal boundaries, execution flags, I/O routing, and spatial topology constraints.
 """
 
 import yaml
@@ -20,7 +20,9 @@ from dotenv import load_dotenv
 from urllib.parse import quote_plus
 from sqlalchemy import create_engine
 
-load_dotenv()
+# Resolve project root explicitly to guarantee localized environment variable discovery
+PROJECT_ROOT = Path(__file__).parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -28,7 +30,6 @@ logger = logging.getLogger(__name__)
 # --- API CREDENTIALS ---
 ENTSOE_API_KEY = os.getenv("ENTSOE_API_KEY")
 
-# Official Validation Logic
 if not ENTSOE_API_KEY:
     logger.warning(
         "ENTSOE_API_KEY not found in .env file. "
@@ -49,16 +50,14 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "False").lower() == "true"
 
 def get_db_engine():
-    """Constructs the SQLAlchemy engine."""
+    """Constructs the SQLAlchemy database engine instance."""
     if not all([DB_USER, DB_PASS, DB_NAME]):
         raise EnvironmentError("Missing critical DB credentials in .env")
         
     encoded_pass = quote_plus(DB_PASS)
     uri = f"postgresql://{DB_USER}:{encoded_pass}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-
-    debug = os.getenv("DEBUG_MODE", "False").lower() == "true"
     
-    return create_engine(uri, echo=debug)
+    return create_engine(uri, echo=DEBUG_MODE)
 
 class PipelineConfig:
     def __init__(
@@ -74,10 +73,8 @@ class PipelineConfig:
         # ==========================================
         # DIRECTORY MAPPING
         # ==========================================
-        # Path(__file__).parent is the 'src' directory.
-        # .parent.parent goes up one level to the main project root.
-        self.project_root = Path(__file__).parent.parent
-        self.output_dir = self.project_root / "outputs"
+        self.project_root = PROJECT_ROOT
+        self.output_dir = self.project_root / "outputs_test"
         self.input_dir = self.project_root / "inputs"
         
         # ==========================================
@@ -86,11 +83,10 @@ class PipelineConfig:
         self.start = pd.Timestamp(date_range[0], tz="UTC")
         raw_end = pd.Timestamp(date_range[1], tz="UTC")
 
-        self.log_level = os.getenv("LOG_LEVEL", "INFO")
-        self.debug_mode = os.getenv("DEBUG_MODE", "False").lower() == "true"
+        self.log_level = LOG_LEVEL
+        self.debug_mode = DEBUG_MODE
         
-        # Shifts exact midnight end-dates back by 1 minute to prevent dangling 
-        # indices that fall outside the API's inclusive hourly blocks.
+        # Shift absolute midnight bounds backward to ensure API block inclusivity
         if raw_end.hour == 0 and raw_end.minute == 0:
             self.end = raw_end - pd.Timedelta(minutes=1)
             logger.info(f"[Config] Adjusted end date from {raw_end} to {self.end} for inclusive indexing.")
@@ -124,7 +120,7 @@ class PipelineConfig:
         # ==========================================
         self.save_csv = True
         self.save_db = True
-        self.load_source = 'csv' # Options: 'csv' or 'db'
+        self.load_source = 'csv' # Authorized flags: 'csv' or 'db'
         
         if io_settings:
             self.save_csv = io_settings.get("save_csv", self.save_csv)
@@ -152,10 +148,19 @@ class PipelineConfig:
             
         with open(yaml_path, 'r') as f:
             topology_data = yaml.safe_load(f)
-            self.neighbours_map = topology_data.get('neighbours', {})
+            raw_neighbours = topology_data.get('neighbours', {})
+            self.hvdc_borders = topology_data.get('hvdc_borders', [])
+            self.valid_zero_zones = topology_data.get('valid_zero_zones', [])
+            zones_to_remove = topology_data.get('zones_to_remove', [])
+
+        # Filter topological map strictly through dictionary comprehension
+        self.neighbours_map = {
+            k: [v for v in neighbors if v not in zones_to_remove] 
+            for k, neighbors in raw_neighbours.items() 
+            if k not in zones_to_remove
+        }
             
         self.all_zones = list(self.neighbours_map.keys())
-        self._filter_zones()
 
         if target_zones:
             self.target_zones = [z for z in target_zones if z in self.all_zones]
@@ -173,23 +178,19 @@ class PipelineConfig:
         )
         self.gen_types_list = self.gen_types_df["entsoe"].tolist()
 
-    def _filter_zones(self):
-        """Removes predefined structural anomalies from the active topology."""
-        to_remove = ["DE_AT_LU", "IE_SEM", "IE", "NIE", "MT", 
-                     "IT", "IT_BRNN", "IT_ROSN", "IT_FOGN"]
-        for z in to_remove:
-            if z in self.all_zones: self.all_zones.remove(z)
-            if z in self.neighbours_map: del self.neighbours_map[z]
+        # Establishes a localized vintage tag for current instantiation
+        self.analysis_source_date = pd.Timestamp.utcnow().strftime('%Y-%m-%d')
 
     @property
     def zones(self):
+        """Returns the active list of topologically valid bidding zones."""
         return self.all_zones
 
     # ==========================================
     # PATH GENERATORS
     # ==========================================
     def get_output_path(self, subfolder: str) -> Path:
-        """Constructs and guarantees the existence of temporal-partitioned (yearly) output directories."""
+        """Constructs and guarantees the existence of temporal-partitioned output directories."""
         path = self.output_dir / subfolder / str(self.year)
         path.mkdir(parents=True, exist_ok=True)
         return path
